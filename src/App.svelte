@@ -299,7 +299,7 @@
             {/each}
           </ol>
 
-          {#if engine.plans.length > 1}
+          {#if engine.plans.length > 1 && engine.stepIdx === 0}
             <div class="flex flex-wrap items-center gap-2 text-xs">
               <span class="text-ink-400">다른 수</span>
               {#each engine.plans as p, i (i)}

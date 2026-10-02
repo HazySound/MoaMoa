@@ -211,6 +211,8 @@ export function readCell(img: RGBAImage, g: Grid, r: number, c: number): CellSta
   if (hover > n / 2) return 'hover'
   if (flash > n / 2) return 'flash'
   if (colored > n / 2) return 'block'
+  // 점 찍기 아이콘: 흰 동심원 + 연한 청록 빛번짐. 테두리가 청록으로 안 잡혀도 가운데가 하얗다
+  if (white >= 6 && purple < 3) return 'icon-dot'
   if (teal * 3 >= n) {
     // 테두리가 청록 쪽인데 가운데에 그림이 있으면 능력 아이콘이 떠 있는 빈 칸이다
     if (white + blue < 4) return teal > n / 2 ? 'empty' : 'unknown'
