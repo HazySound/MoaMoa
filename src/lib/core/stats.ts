@@ -48,3 +48,39 @@ export function blendedWeights(c: Counts, stage: number): Map<number, number> {
   for (const [k, v] of w) w.set(k, v / total)
   return w
 }
+
+// ─── 판 기록 ─────────────────────────────────────────────────────────────
+
+/**
+ * 한 판의 기록. 점수는 화면의 점수 숫자를 읽는 게 아니라 판 변화로 센 값이다
+ * (조각 칸 수 + 줄 제거 300×n² + 능력 50). 중간부터 공유했으면 fromStart가 false라 앞부분이 빠져 있다.
+ */
+export interface GameLog {
+  start: number
+  end: number
+  fromStart: boolean
+  score: number
+  lines: number
+  sets: number
+  pieces: number
+  swapsUsed: number
+  dotsUsed: number
+  /** 한 번에 지운 줄 수별 횟수 [0, 1줄, 2줄, 3줄, 4줄, 5줄] */
+  clears: number[]
+}
+
+const GAMES_KEY = 'moamoa.games.v1'
+
+export const newGame = (fromStart: boolean): GameLog => ({
+  start: Date.now(), end: Date.now(), fromStart, score: 0, lines: 0, sets: 0, pieces: 0, swapsUsed: 0, dotsUsed: 0, clears: [0, 0, 0, 0, 0, 0],
+})
+
+export interface GameHistory { current: GameLog | null; past: GameLog[] }
+
+export function loadGames(): GameHistory {
+  try { return { current: null, past: [], ...JSON.parse(localStorage.getItem(GAMES_KEY) ?? '{}') } } catch { return { current: null, past: [] } }
+}
+
+export function saveGames(h: GameHistory) {
+  try { localStorage.setItem(GAMES_KEY, JSON.stringify(h)) } catch { /* 이번 창에서만 남는다 */ }
+}

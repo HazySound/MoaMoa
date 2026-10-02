@@ -8,10 +8,10 @@
  *  - 세 조각을 다 놓으면 새 카드 3장을 기다린다
  * 점 찍기(1칸)와 바꿔 뽑기(카드가 다른 조각으로 바뀜)도 알아채서 그때만 다시 계산한다.
  */
-import { boardKey, canonicalKey, COLS, emptyBoard, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
+import { ABILITY_SCORE, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
 import { explainMove, type Move } from './core/track'
 import { identify, stageOf, type PieceDef } from './core/pieces'
-import { blendedWeights, loadCounts, record, saveCounts, seenIn, type Counts } from './core/stats'
+import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
 import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
@@ -73,6 +73,30 @@ class Engine {
 
   /** 실제로 나온 조각 수 (단계별) */
   pieceCounts = $state<Counts>(loadCounts())
+  /** 판별 기록 (지금 판 + 지난 판들) */
+  games = $state<GameHistory>(loadGames())
+
+  /** 지금 판 기록을 고친다. 없으면 (중간부터 공유한 것으로 보고) 새로 연다 */
+  private logGame(fn: (g: GameLog) => void) {
+    if (!this.live) return
+    const g = this.games.current ?? newGame(false)
+    fn(g)
+    g.end = Date.now()
+    this.games = { ...this.games, current: { ...g } }
+    saveGames(this.games)
+  }
+
+  private startGame() {
+    if (!this.live) return
+    const past = this.games.current && this.games.current.pieces > 0 ? [this.games.current, ...this.games.past].slice(0, 200) : this.games.past
+    this.games = { current: newGame(true), past }
+    saveGames(this.games)
+  }
+
+  resetGames() {
+    this.games = { current: null, past: [] }
+    saveGames(this.games)
+  }
   get seenThisStage() { return seenIn(this.pieceCounts, this.stage) }
 
   /** 디버그 미리보기용: 마지막으로 읽은 프레임 */
@@ -282,6 +306,7 @@ class Engine {
     this.hand = hand
     if (swapped) {
       this.swaps = Math.max(0, this.swaps - 1)
+      this.logGame((g) => g.swapsUsed++)
       this.requestSolve()
     }
   }
@@ -295,6 +320,7 @@ class Engine {
   }
 
   private recordSet() {
+    this.logGame((g) => g.sets++)
     this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
     saveCounts(this.pieceCounts)
   }
@@ -309,6 +335,7 @@ class Engine {
     // 판이 텅 비고 카드 세 장이 다 새것이면 새 게임이다. 줄 수(=단계)와 능력을 처음부터 센다
     const fresh = B.every((row) => row === 0) && cards.every((c) => c.state === 'piece')
     if (fresh) {
+      this.startGame()
       this.lines = 0
       this.swaps = 0
       this.dots = 0
@@ -331,17 +358,26 @@ class Engine {
   private applyMove(mv: Move, B: Board) {
     this.keys.board = ''
     // 지운 줄, 아이콘 줄을 지워서 얻은 능력
+    let got = 0
     if (mv.cleared.length) {
       this.lines += mv.cleared.length
       for (const [idx, ic] of this.iconTrack) {
         if (!mv.cleared.includes(Math.floor(idx / COLS))) continue
         this.iconTrack.delete(idx)
         if (ic.seen < this.iconNeed || this.swaps + this.dots >= 7) continue
+        got++
         if (ic.kind === 'dot') this.dots++
         else this.swaps++
       }
       this.publishIcons()
     }
+    this.logGame((g) => {
+      g.score += mv.shape.cells + lineScore(mv.cleared.length) + got * ABILITY_SCORE
+      g.lines += mv.cleared.length
+      g.clears[Math.min(5, mv.cleared.length)]++
+      if (mv.slot < 0) g.dotsUsed++
+      else g.pieces++
+    })
     this.board = B
     this.updatedAt = Date.now()
     if (mv.slot < 0) {

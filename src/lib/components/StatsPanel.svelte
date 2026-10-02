@@ -27,12 +27,16 @@
   const total = $derived(seenIn(engine.pieceCounts, stage))
   const max = $derived(Math.max(UNIFORM * 1.6, ...PIECES.map((p) => (total ? (counts[p.id] ?? 0) / total : 0))))
   const allTotal = $derived([1, 2, 3, 4, 5].reduce((a, s) => a + seenIn(engine.pieceCounts, s), 0))
+  const games = $derived([...(engine.games.current ? [engine.games.current] : []), ...engine.games.past])
+  const best = $derived(Math.max(0, ...games.filter((g) => g.fromStart).map((g) => g.score)))
+  const fmtDate = (t: number) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
   async function copy() {
     const data = {
       note: '모아모아 조각 통계 (단계 → 조각 id → 나온 횟수)',
       pieces: Object.fromEntries(PIECES.map((p) => [p.id, `${p.name} ${p.shape.cells}칸`])),
       counts: engine.pieceCounts,
+      games,
     }
     try {
       await navigator.clipboard.writeText(JSON.stringify(data))
@@ -46,6 +50,7 @@
   function reset() {
     if (!confirmReset) { confirmReset = true; setTimeout(() => (confirmReset = false), 3000); return }
     engine.resetStats()
+    engine.resetGames()
     confirmReset = false
   }
 </script>
@@ -54,7 +59,7 @@
   <button class="flex w-full items-center justify-between p-4 text-sm" onclick={() => { open = !open; stage = engine.stage }}>
     <span class="flex items-center gap-2 text-ink-300"><IconChart class="size-4" />조각 통계</span>
     <span class="flex items-center gap-3 text-xs text-ink-500">
-      {allTotal}개 · {Math.floor(allTotal / 3)}세트
+      {games.length}판{best ? ` · 최고 ${best.toLocaleString()}` : ''} · 조각 {allTotal}개
       <IconChevron class="size-4 transition-transform {open ? 'rotate-180' : ''}" />
     </span>
   </button>
@@ -66,6 +71,34 @@
         (판이 비면 자동으로 0부터 셉니다). 단계마다 100세트쯤 모이면 꽤 믿을 만해요.
       </p>
 
+      <p class="mb-2 text-xs font-medium text-ink-300">판 기록</p>
+      {#if games.length}
+        <div class="mb-5 overflow-hidden rounded-xl border border-fg/5">
+          <table class="w-full text-xs">
+            <thead class="bg-fg/[0.03] text-ink-400">
+              <tr><th class="px-2 py-1.5 text-left font-normal">언제</th><th class="px-2 text-right font-normal">점수</th><th class="px-2 text-right font-normal">줄</th><th class="px-2 text-right font-normal">세트</th><th class="px-2 text-right font-normal">2·3·4·5줄</th></tr>
+            </thead>
+            <tbody class="font-mono">
+              {#each games.slice(0, 12) as g, i (g.start)}
+                <tr class="border-t border-fg/5" class:text-s1={g.fromStart && g.score === best}>
+                  <td class="px-2 py-1.5 font-sans text-ink-300">
+                    {fmtDate(g.start)}{#if i === 0 && engine.games.current === g}<span class="ml-1 text-s1">진행 중</span>{/if}{#if !g.fromStart}<span class="ml-1 text-ink-500" title="중간부터 공유해서 앞부분이 빠졌어요">중간부터</span>{/if}
+                  </td>
+                  <td class="px-2 text-right text-ink-100">{g.score.toLocaleString()}</td>
+                  <td class="px-2 text-right">{g.lines}</td>
+                  <td class="px-2 text-right">{g.sets}</td>
+                  <td class="px-2 text-right text-ink-400">{g.clears.slice(2).join('·')}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <p class="-mt-3 mb-5 text-[11px] text-ink-500">점수는 판 변화로 센 값이에요. 게임 화면 점수와 다르면 놓친 배치가 있다는 뜻이니 알려 주세요.</p>
+      {:else}
+        <p class="mb-5 rounded-xl bg-fg/[0.03] p-3 text-center text-xs text-ink-400">화면 공유 중에 새 게임을 시작하면 판마다 기록돼요</p>
+      {/if}
+
+      <p class="mb-2 text-xs font-medium text-ink-300">조각 출현 빈도</p>
       <div class="mb-3 flex gap-1.5">
         {#each [1, 2, 3, 4, 5] as s (s)}
           <button class="tab" class:active={stage === s} onclick={() => (stage = s)}>
@@ -98,10 +131,10 @@
       {/if}
 
       <div class="mt-4 flex flex-wrap gap-2">
-        <button class="mini" onclick={copy} disabled={!allTotal}>
+        <button class="mini" onclick={copy} disabled={!allTotal && !games.length}>
           {#if copied}<IconCheck class="size-3.5" />복사했어요{:else}<IconCopy class="size-3.5" />기록 복사 (JSON){/if}
         </button>
-        <button class="mini danger" class:armed={confirmReset} onclick={reset} disabled={!allTotal}>
+        <button class="mini danger" class:armed={confirmReset} onclick={reset} disabled={!allTotal && !games.length}>
           <IconTrash class="size-3.5" />{confirmReset ? '한 번 더 누르면 지워요' : '기록 지우기'}
         </button>
       </div>
