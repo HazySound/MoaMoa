@@ -623,11 +623,16 @@ class Engine {
    */
   private spawnPending = false
 
-  /** 새 아이콘이 생겼다 = 방금 7번째 배치였다. 놓은 직후일 때만 세던 값을 7로 맞춘다 */
+  /**
+   * 새 아이콘이 생겼다 = 방금 7번째 배치였다. 단, 카운트를 7로 맞추는 건 카운트를 모를 때(다시 맞춤 뒤 `?`)만이다.
+   * 전에는 놓은 직후 아이콘이 보이기만 하면 늘 7로 맞췄는데, 놓은 직후의 커서·반짝임을 새 아이콘으로 잘못 보면
+   * 멀쩡히 세던 카운트가 자꾸 7로 초기화됐다. 배치 수는 확실히 세고 있으니 그걸 믿는다
+   */
   private onNewIcon() {
     const pending = this.spawnPending
     this.spawnPending = false
     if (!this.updatedAt || (!pending && Date.now() - this.lastPlacedAt > 3000)) return
+    if (!this.nextUnsure && this.nextAbility !== null) return
     this.nextUnsure = false
     if (this.nextAbility !== 7) {
       if (this.nextAbility !== null) this.log('능력 카운트 보정', `${this.nextAbility} → 7`)

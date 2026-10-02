@@ -324,6 +324,35 @@ describe('새 아이콘이 늦게 보일 때', () => {
   })
 })
 
+describe('다음 능력 카운트가 초기화되던 문제', () => {
+  const iconAt = (i: number) => Array.from({ length: 160 }, (_, k) => (k === i ? 'icon-dot' : 'empty'))
+
+  test('카운트를 알고 있으면, 놓은 직후 새 아이콘(으로 보이는 것)이 나와도 7로 덮어쓰지 않는다', async () => {
+    const { emptyBoard } = await import('../src/lib/core/board')
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.updatedAt = Date.now()
+    engine.lastPlacedAt = Date.now() // 방금 놓았다
+    engine.nextAbility = 4
+    engine.nextUnsure = false
+    for (let i = 0; i < 2; i++) engine.trackIcons(iconAt(42), engine.board, 2)
+    expect(engine.nextAbility).toBe(4)
+  })
+
+  test('다시 맞춤 뒤 카운트를 모를 때(?)는 새 아이콘을 보고 7로 맞춘다', async () => {
+    const { emptyBoard } = await import('../src/lib/core/board')
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.updatedAt = Date.now()
+    engine.lastPlacedAt = Date.now()
+    engine.nextAbility = 4
+    engine.nextUnsure = true
+    for (let i = 0; i < 2; i++) engine.trackIcons(iconAt(42), engine.board, 2)
+    expect(engine.nextAbility).toBe(7)
+    expect(engine.nextUnsure).toBe(false)
+  })
+})
+
 describe('능력 획득 누락 (줄을 안 지운 배치에서 생긴 아이콘)', () => {
   test('7번째 배치로 생긴 아이콘은 그 뒤 다른 배치로 그 줄을 지우면 획득한다', async () => {
     const { PIECES } = await import('../src/lib/core/pieces')
