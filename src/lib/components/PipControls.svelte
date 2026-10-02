@@ -15,9 +15,9 @@
 
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
   const steppers = [
-    { label: '바꿔 뽑기', icon: IconSwap, cls: 'text-violet-400', get: () => engine.swaps, set: (v: number) => (engine.swaps = clamp(v, 0, 7 - engine.dots)) },
-    { label: '점 찍기', icon: IconDot, cls: 'text-sky-400', get: () => engine.dots, set: (v: number) => (engine.dots = clamp(v, 0, 7 - engine.swaps)) },
-    { label: '다음 능력', icon: null, cls: '', get: () => engine.nextAbility ?? 7, set: (v: number) => (engine.nextAbility = clamp(v, 1, 7)) },
+    { label: '바꿔 뽑기', icon: IconSwap, cls: 'text-violet-400', get: () => engine.swaps, set: (v: number) => { engine.swaps = clamp(v, 0, 7 - engine.dots); engine.abilityUnsure = false } },
+    { label: '점 찍기', icon: IconDot, cls: 'text-sky-400', get: () => engine.dots, set: (v: number) => { engine.dots = clamp(v, 0, 7 - engine.swaps); engine.abilityUnsure = false } },
+    { label: '다음 능력', icon: null, cls: '', get: () => engine.nextAbility ?? 7, set: (v: number) => { engine.nextAbility = clamp(v, 1, 7); engine.nextUnsure = false } },
     { label: '지운 줄', icon: null, cls: '', get: () => engine.lines, set: (v: number) => (engine.lines = Math.max(0, v)) },
   ]
 </script>

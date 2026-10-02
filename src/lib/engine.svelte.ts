@@ -84,6 +84,11 @@ class Engine {
    */
   nextAbility = $state<number | null>(null)
   get held() { return this.swaps + this.dots }
+  /** 화면 기준으로 다시 맞춘 뒤라 그 사이 배치·획득을 못 셌을 수 있다 (작은 창에 ?로 알린다) */
+  abilityUnsure = $state(false)
+  nextUnsure = $state(false)
+  /** 설정에서 직접 맞추면 다시 믿는다 */
+  confirmCounts() { this.abilityUnsure = false; this.nextUnsure = false }
   /** 게임 화면의 '능력이 가득 찼습니다'(주황색 칸)가 떠 있다 */
   gameFull = $state(false)
   /** 게임 화면과 도우미가 센 능력 개수가 안 맞는다 (꽉 찼는지 여부로만 안다) */
@@ -270,6 +275,22 @@ class Engine {
     if (this.hand.length === 3 && cards.some((c, i) => c.selected !== this.hand[i].selected)) {
       this.hand = this.hand.map((h, i) => ({ ...h, selected: cards[i].selected }))
     }
+    // 커서·못 읽은 칸은 직전 값을 쓰고 '모름'으로 표시해 둔다. 판 변화를 풀 때 그 칸은 어느 쪽이든 맞는 것으로 본다
+    const B = new Array<number>(ROWS).fill(0)
+    const unsure = new Array<number>(ROWS).fill(0)
+    br.cells.forEach((st, i) => {
+      const r = Math.floor(i / COLS), c = i % COLS
+      // 아이콘 칸도 '모름'이다. 아이콘이 반짝이면 밑이 블록인지 빈칸인지 프레임마다 다르게 읽힌다.
+      // 그 칸이 바뀌는 건 조각을 놓거나 줄이 지워질 때뿐이고, 그때는 다른 칸도 함께 바뀌어서 그걸로 안다
+      // 배치 미리보기·줄 강조 칸도 '모름'이다. 그동안에도 아이콘은 계속 따라간다
+      if (st === 'cursor' || st === 'unknown' || st === 'hover' || st === 'invalid' || st === 'flash' || isIconState(st)) {
+        unsure[r] |= 1 << c
+        const known = this.updatedAt ? (this.board[r] >> c) & 1 : isFilledState(st) ? 1 : 0
+        if (known) B[r] |= 1 << c
+      } else if (isFilledState(st)) B[r] |= 1 << c
+    })
+    this.trackIcons(br.cells, B, live ? 2 : 1)
+    this.lastUnsure = unsure
     if (br.busy) { this.status = 'busy'; return }
     this.status = live ? 'live' : 'image'
     const full = readAbilityFull(frame.image, g)
@@ -278,21 +299,6 @@ class Engine {
       this.log(full ? '게임: 능력 꽉 참' : '게임: 능력 자리 있음', `도우미 ${this.held}/7`)
     }
 
-    // 커서·못 읽은 칸은 직전 값을 쓰고 '모름'으로 표시해 둔다. 판 변화를 풀 때 그 칸은 어느 쪽이든 맞는 것으로 본다
-    const B = new Array<number>(ROWS).fill(0)
-    const unsure = new Array<number>(ROWS).fill(0)
-    br.cells.forEach((st, i) => {
-      const r = Math.floor(i / COLS), c = i % COLS
-      // 아이콘 칸도 '모름'이다. 아이콘이 반짝이면 밑이 블록인지 빈칸인지 프레임마다 다르게 읽힌다.
-      // 그 칸이 바뀌는 건 조각을 놓거나 줄이 지워질 때뿐이고, 그때는 다른 칸도 함께 바뀌어서 그걸로 안다
-      if (st === 'cursor' || st === 'unknown' || isIconState(st)) {
-        unsure[r] |= 1 << c
-        const known = this.updatedAt ? (this.board[r] >> c) & 1 : isFilledState(st) ? 1 : 0
-        if (known) B[r] |= 1 << c
-      } else if (isFilledState(st)) B[r] |= 1 << c
-    })
-    this.trackIcons(br.cells, B, live ? 2 : 1)
-    this.lastUnsure = unsure
 
     const need = live ? 2 : 1
     const cardsReadable = cards.every((c) => c.state !== 'unknown')
@@ -454,9 +460,18 @@ class Engine {
   private resync(B: Board, cards: CardRead[]) {
     // 판이 텅 비고 카드 세 장이 다 새것이면 새 게임이다. 줄 수(=단계)와 능력을 처음부터 센다
     const fresh = B.every((row) => row === 0) && cards.every((c) => c.state === 'piece')
+    if (!fresh && this.updatedAt) {
+      // 그 사이 놓은 조각·지운 아이콘 줄을 못 셌을 수 있다. 다음 새 아이콘은 언제 보이든 받아서 카운트를 맞춘다
+      this.abilityUnsure = true
+      this.nextUnsure = true
+      this.spawnPending = true
+    }
     if (fresh) {
       this.startGame()
       this.nextAbility = 7
+      this.abilityUnsure = false
+      this.nextUnsure = false
+      this.spawnPending = false
       this.lines = 0
       this.swaps = 0
       this.dots = 0
@@ -509,7 +524,10 @@ class Engine {
     if (mv.slot >= 0) {
       this.lastPlacedAt = Date.now()
       // 7개를 들고 있으면 아이콘이 생기지 않고 카운트도 멈춘다
-      if (this.nextAbility !== null && this.heldForSolve < 7) this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
+      if (this.nextAbility !== null && this.heldForSolve < 7) {
+        this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
+        if (this.nextAbility === 7) this.spawnPending = true
+      } else if (this.nextAbility === null) this.spawnPending = true
     }
     this.board = B
     this.updatedAt = Date.now()
@@ -564,7 +582,7 @@ class Engine {
         if (!t) {
           // 아이콘은 조각을 놓은 직후에만 새로 생긴다(공지). 그 밖에 갑자기 보이는 '아이콘'은
           // 커서 등을 잘못 본 것이라 받지 않는다. 처음 맞출 때 이미 판에 있던 아이콘은 받는다
-          const justPlaced = Date.now() - this.lastPlacedAt < 3000 || changing
+          const justPlaced = Date.now() - this.lastPlacedAt < 3000 || changing || this.spawnPending
           if (this.updatedAt && !justPlaced) return
           this.iconTrack.set(i, { kind, seen: 1, miss: 0, fresh: changing })
           if (need === 1) { changed = true; this.onNewIcon() }
@@ -593,10 +611,19 @@ class Engine {
 
   /** 마지막으로 조각을 놓은 때. 새 아이콘은 놓은 직후에만 생긴다 */
   private lastPlacedAt = 0
+  /**
+   * 새 아이콘이 나올 차례다 (7번째 배치를 마쳤거나, 카운트를 믿을 수 없을 때).
+   * 놓자마자 다음 조각을 판 위에 올려 미리보기가 오래 떠 있으면 새 아이콘을 늦게 보게 되는데,
+   * 차례인 동안은 시간이 지나도 받는다
+   */
+  private spawnPending = false
 
   /** 새 아이콘이 생겼다 = 방금 7번째 배치였다. 놓은 직후일 때만 세던 값을 7로 맞춘다 */
   private onNewIcon() {
-    if (!this.updatedAt || Date.now() - this.lastPlacedAt > 3000) return
+    const pending = this.spawnPending
+    this.spawnPending = false
+    if (!this.updatedAt || (!pending && Date.now() - this.lastPlacedAt > 3000)) return
+    this.nextUnsure = false
     if (this.nextAbility !== 7) {
       if (this.nextAbility !== null) this.log('능력 카운트 보정', `${this.nextAbility} → 7`)
       this.nextAbility = 7

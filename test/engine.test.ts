@@ -303,3 +303,23 @@ describe('카드 기억이 꼬였을 때', () => {
     expect(engine.events.some((e: any) => e.what === '카드와 기억이 달라 다시 맞춤')).toBe(true)
   })
 })
+
+describe('새 아이콘이 늦게 보일 때', () => {
+  test('7번째 배치 뒤 아이콘 차례면, 미리보기 때문에 몇 초 늦게 보여도 받고 카운트를 맞춘다', async () => {
+    const { emptyBoard } = await import('../src/lib/core/board')
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.updatedAt = Date.now()
+    engine.lastPlacedAt = Date.now() - 10_000 // 10초 전에 놓았다 (그동안 미리보기가 떠 있었다)
+    engine.spawnPending = true
+    engine.nextAbility = 7
+    const cells = Array.from({ length: 160 }, (_, i) => (i === 42 ? 'icon-dot' : 'empty'))
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells, engine.board, 2)
+    expect(engine.icons).toEqual([{ r: 4, c: 2, kind: 'dot' }])
+    expect(engine.spawnPending).toBe(false)
+    // 다음 아이콘 차례가 아니면 다시 받지 않는다 (커서 오인 방지)
+    const cells2 = Array.from({ length: 160 }, (_, i) => (i === 77 ? 'icon-dot' : 'empty'))
+    for (let i = 0; i < 4; i++) engine.trackIcons(cells2, engine.board, 2)
+    expect(engine.icons.length).toBe(1)
+  })
+})

@@ -90,8 +90,9 @@
   <div class="abil">
     <span class="flex items-center gap-1" title="바꿔 뽑기"><IconSwap class="size-3.5 text-violet-400" /><b>{engine.swaps}</b></span>
     <span class="flex items-center gap-1" title="점 찍기"><IconDot class="size-3.5 text-sky-400" /><b>{engine.dots}</b></span>
+    {#if engine.abilityUnsure}<span class="unsure" title="화면 기준으로 다시 맞춘 뒤라 그 사이 획득을 못 셌을 수 있어요. 설정에서 게임 화면 값으로 맞춰 주세요">?</span>{/if}
     <span class="text-ink-400" class:full={engine.held >= 7 || engine.gameFull}>보유 {engine.held}/7</span>
-    <span class="ml-auto text-ink-400">다음 능력 <b class="text-ink-100">{engine.nextAbility ?? '?'}</b>번</span>
+    <span class="ml-auto text-ink-400">다음 능력 <b class="text-ink-100">{engine.nextAbility ?? '?'}</b>번{#if engine.nextUnsure}<span class="unsure ml-1" title="새 아이콘이 나오면 자동으로 맞춰요">?</span>{/if}</span>
   </div>
 
   {#if engine.heldMismatch}
@@ -185,6 +186,10 @@
   }
   .abil b { font-family: var(--font-mono); font-weight: 600; }
   .abil .full { color: var(--color-s3); }
+  .unsure {
+    display: inline-grid; place-items: center; width: 1rem; height: 1rem; border-radius: 999px;
+    font: 700 0.65rem/1 var(--font-mono); color: var(--color-ink-950); background: var(--color-s2);
+  }
   .view {
     padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.68rem; color: var(--color-ink-300);
     background: rgb(var(--fg) / 0.05); border: 1px solid rgb(var(--fg) / 0.08);
