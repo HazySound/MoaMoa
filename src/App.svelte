@@ -387,8 +387,8 @@
           </label>
           <div class="grid grid-cols-4 gap-2 text-xs">
             {#each [
-              { label: '바꿔 뽑기', icon: IconSwap, get: () => engine.swaps, set: (v: number) => (engine.swaps = v) },
               { label: '점 찍기', icon: IconDot, get: () => engine.dots, set: (v: number) => (engine.dots = v) },
+              { label: '바꿔 뽑기', icon: IconSwap, get: () => engine.swaps, set: (v: number) => (engine.swaps = v) },
               { label: '제거한 줄', icon: null, get: () => engine.lines, set: (v: number) => (engine.lines = v) },
               { label: '다음 능력까지', icon: null, get: () => engine.nextAbility ?? 7, set: (v: number) => (engine.nextAbility = Math.min(7, Math.max(1, v))) },
             ] as f (f.label)}

@@ -382,6 +382,8 @@ class Engine {
       return
     }
     let changed = false, swapped = false
+    // 무엇이 무엇으로 바뀌어 '사용'으로 셌는지 남긴다. 실제로 안 썼는데 줄었다면 카드를 잘못 읽은 것이다
+    let swapWhat = ''
     const hand = this.hand.map((h, i) => {
       const c = cards[i]
       if (h.state !== 'piece' || !h.shape || !ok(c)) return h
@@ -394,13 +396,15 @@ class Engine {
       // 다른 조각이 됐다: 바꿔 뽑기. 커서 겹침으로 잘못 읽은 것과 구별하려고 조금 더 기다린다
       if (!this.steady(`swap${i}`, canonicalKey(c.shape!), need + 2)) return h
       changed = swapped = true
-      return { ...h, shape: c.shape, piece: identify(c.shape!) }
+      const next = identify(c.shape!)
+      swapWhat = `${i + 1}번 ${h.piece?.name ?? '?'}→${next?.name ?? '?'} `
+      return { ...h, shape: c.shape, piece: next }
     })
     if (!changed) return
     this.hand = hand
     if (swapped) {
       this.swaps = Math.max(0, this.swaps - 1)
-      this.log('바꿔 뽑기 사용', `→ ⇄${this.swaps} ◎${this.dots}`)
+      this.log('바꿔 뽑기 사용', `${swapWhat}→ ◎${this.dots} ⇄${this.swaps}`)
       this.logGame((g) => g.swapsUsed++)
       this.requestSolve('바꿔 뽑기를 써서')
     }
@@ -512,7 +516,7 @@ class Engine {
         got++
         if (ic.kind === 'dot') this.dots++
         else this.swaps++
-        this.log('능력 획득', `${ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'} → ⇄${this.swaps} ◎${this.dots}`)
+        this.log('능력 획득', `↓${Math.floor(idx / COLS) + 1} →${(idx % COLS) + 1} ${ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'} → ◎${this.dots} ⇄${this.swaps}`)
       }
       this.publishIcons()
     }
@@ -540,7 +544,7 @@ class Engine {
     if (mv.slot < 0) {
       // 점 찍기를 썼다
       this.dots = Math.max(0, this.dots - 1)
-      this.log('점 찍기 사용', `→ ⇄${this.swaps} ◎${this.dots}`)
+      this.log('점 찍기 사용', `→ ◎${this.dots} ⇄${this.swaps}`)
       this.requestSolve('점 찍기를 써서')
       return
     }
