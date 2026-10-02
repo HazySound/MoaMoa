@@ -686,7 +686,8 @@ class Engine {
         t.miss = 0
         if (t.seen < need && ++t.seen === need) {
           changed = true
-          this.log('새 아이콘', `↓${r + 1} →${c + 1} ${kind === 'dot' ? '점 찍기' : '바꿔 뽑기'}`)
+          // 처음 맞출 때(새로고침·화면 공유 시작) 읽은 건 새로 생긴 게 아니라 원래 있던 아이콘이다. 기록에서 헷갈리지 않게 나눈다
+          this.log(this.updatedAt ? '새 아이콘' : '판에 있던 아이콘', `↓${r + 1} →${c + 1} ${kind === 'dot' ? '점 찍기' : '바꿔 뽑기'}`)
           // 한 번에 하나만 생긴다. 같이 후보로 잡혔던 다른 칸(커서 등)은 버린다
           if (this.updatedAt) for (const [j, o] of this.iconTrack) if (j !== i && o.seen < need) this.iconTrack.delete(j)
           this.onNewIcon()
