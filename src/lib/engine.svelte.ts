@@ -15,7 +15,8 @@ import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, sav
 import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, isFilledState, isIconState, readAbilityFull, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
-import { readAbilityNumbers, type AbilityNumbers } from './vision/digits'
+import { readGlyphs, type GlyphReads } from './vision/digits'
+import { ScreenCounts, emptyMemory, type Memory } from './core/counts'
 import type { SolveRequest, SolveResponse } from './solver.worker'
 import SolverWorker from './solver.worker?worker'
 
@@ -31,6 +32,20 @@ export interface HandCard {
 }
 
 const PREFS_KEY = 'moamoa.prefs.v1'
+const SHAPES_KEY = 'moamoa.shapes.v1'
+const EVENTS_KEY = 'moamoa.events.v1'
+
+/** 검산으로 확인한 숫자 모양 (core/counts.ts). 같은 창 크기로 다시 열면 바로 알아본다 */
+function loadShapes(): Memory {
+  try { return { ...emptyMemory(), ...JSON.parse(localStorage.getItem(SHAPES_KEY) ?? '{}') } } catch { return emptyMemory() }
+}
+function saveShapes(m: Memory) {
+  try { localStorage.setItem(SHAPES_KEY, JSON.stringify(m)) } catch { /* 이번 창에서만 기억한다 */ }
+}
+/** 최근 기록은 새로고침해도 남긴다. 개수가 틀어진 걸 보고 새로고침한 뒤에도 원인을 되짚을 수 있게 */
+function loadEvents(): { t: number; what: string; detail: string }[] {
+  try { const v = JSON.parse(localStorage.getItem(EVENTS_KEY) ?? '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+}
 
 interface Prefs { style: number; swaps: number; dots: number; lines: number; thinkMs: number }
 
@@ -63,10 +78,11 @@ class Engine {
   /** 마지막 계산을 시작한 까닭 */
   solveReason = $state('')
   /** 최근 일어난 일 (인식 화면 보기에 보여 준다. 문제를 제보받을 때 원인을 찾는 용도) */
-  events = $state<{ t: number; what: string; detail: string }[]>([])
+  events = $state<{ t: number; what: string; detail: string }[]>(loadEvents())
   private log(what: string, detail = '') {
     // 능력 개수가 어긋난 원인을 한 판 단위로 되짚을 수 있게 넉넉히 남긴다 (30개로는 몇 세트밖에 안 됐다)
     this.events = [{ t: Date.now(), what, detail }, ...this.events].slice(0, 400)
+    try { localStorage.setItem(EVENTS_KEY, JSON.stringify(this.events)) } catch { /* 이번 창에서만 남는다 */ }
   }
 
   /** 계산 진행률 0~1 */
@@ -210,8 +226,9 @@ class Engine {
     this.updatedAt = 0
     this.iconTrack.clear()
     this.lingering.clear()
-    this.numsAt = 0
+    this.numsSeen = false
     this.nextAt = 0
+    this.screen.reset()
     this.adoptFrames = 0
     this.icons = []
     this.keys = {}
@@ -298,10 +315,10 @@ class Engine {
     this.trackIcons(br.cells, B, live ? 2 : 1)
     this.lastUnsure = unsure
     // 능력 숫자는 판 미리보기와 상관없는 자리라 매 프레임 읽는다
-    this.syncNumbers(readAbilityNumbers(frame.image, g), live)
+    const full = readAbilityFull(frame.image, g)
+    this.syncNumbers(readGlyphs(frame.image, g), full, live)
     if (br.busy) { this.status = 'busy'; return }
     this.status = live ? 'live' : 'image'
-    const full = readAbilityFull(frame.image, g)
     if (full !== this.gameFull && this.steady('full', String(full), live ? 3 : 1)) {
       this.gameFull = full
       this.log(full ? '게임: 능력 꽉 참' : '게임: 능력 자리 있음', `도우미 ${this.held}/7`)
@@ -320,35 +337,39 @@ class Engine {
 
   // ─── 능력 숫자 (게임 화면) ─────────────────────────────────────────────
 
-  /** 이번 프레임에 읽은 숫자 (못 읽으면 null) */
-  private nums: AbilityNumbers = { dots: null, swaps: null, next: null, held: null }
-  /** 화면 숫자를 마지막으로 믿을 만하게 읽은 때. 최근이면 개수는 화면이 정하고 따라 세지 않는다 */
-  private numsAt = 0
-  get screenCounts() { return Date.now() - this.numsAt < 2000 }
-  /** '다음 능력 N번'을 마지막으로 믿을 만하게 읽은 때 */
+  /** 게임 화면의 숫자 모양으로 개수를 정한다 (core/counts.ts). 검산으로 확인한 숫자 모양은 브라우저에 남긴다 */
+  private screen = new ScreenCounts(loadShapes(), saveShapes)
+  /**
+   * 버튼 옆 숫자를 한 번이라도 읽었으면 그 뒤로 개수는 화면 숫자로만 바뀐다. 잠깐 못 읽어도(커서가 버튼을 가림,
+   * 처음 보는 숫자 모양) 도우미가 따라 세며 더하고 빼지 않는다. 전에는 2초 못 읽으면 따라 세기로 돌아갔고,
+   * 버튼 숫자 4·5·7은 표본이 없어 늘 못 읽었기 때문에 보유가 많아지면 개수가 혼자 틀어졌다
+   */
+  private numsSeen = false
+  get screenCounts() { return this.numsSeen }
+  /** '다음 능력 N번'을 마지막으로 읽은 때 */
   private nextAt = 0
-  /** 이 때까지는 보이는 아이콘을 조건 없이 받는다 (화면 기준으로 다시 맞춘 직후) */
+  /** 남은 프레임 동안은 보이는 아이콘을 조건 없이 받는다 (화면 기준으로 다시 맞춘 직후). 시간이 아니라 프레임으로 센다:
+   *  계산이 오래 걸려 프레임이 늦게 와도 다시 맞춘 뒤 화면을 몇 장은 꼭 본다 */
   private adoptFrames = 0
   /** 화면 숫자가 줄어든 때(아직 배치로 설명 안 된 사용). 사용을 받아들이는 근거가 된다 */
   private drops = { dots: 0, swaps: 0 }
   /** 판·카드로 사용을 받아들인 때. 그 직후 숫자가 주는 건 같은 사용이다 */
   private usedAt = { dots: 0, swaps: 0 }
 
-  /**
-   * 화면 숫자로 개수를 맞춘다. 같은 값이 3프레임 이어져야 믿는다 (커서가 버튼 위를 지나가는 동안의 오독 방지).
-   * 점 찍기 + 바꿔 뽑기가 '보유 개수 N/7'과 안 맞는 프레임은 버린다 (버튼을 커서가 가린 경우 등)
-   */
-  private syncNumbers(n: AbilityNumbers, live: boolean) {
-    const held = n.held ?? (this.gameFull ? 7 : null)
-    if (n.dots !== null && n.swaps !== null && held !== null && n.dots + n.swaps !== held) n = { ...n, dots: null, swaps: null }
-    this.nums = n
+  /** 화면 숫자로 개수를 맞춘다. full: 보유 칸이 '능력이 가득 찼습니다'로 바뀌어 있다 */
+  private syncNumbers(r: GlyphReads, full: boolean, live: boolean) {
+    for (const e of this.screen.feed(r, full, live ? 3 : 1)) {
+      // 같은 화면이 깜빡일 때마다 같은 말을 되풀이하지 않는다
+      const key = e.what + e.detail
+      if (key !== this.lastScreenEvent) { this.lastScreenEvent = key; this.log(e.what, e.detail) }
+    }
     if (!this.updatedAt) return
-    const need = live ? 3 : 1
     const now = Date.now()
-    if (n.dots !== null && n.swaps !== null && this.steady('numbers', `${n.dots}/${n.swaps}`, need)) {
-      this.numsAt = now
+    const sc = this.screen
+    if (sc.countsFresh) {
+      if (!this.numsSeen) { this.numsSeen = true; this.log('화면 숫자 읽기 시작', `◎${sc.dots} ⇄${sc.swaps}`) }
       for (const k of ['dots', 'swaps'] as const) {
-        const v = n[k]!
+        const v = sc[k]!
         if (v === this[k]) continue
         // 판·카드로 아직 못 본 사용이면 기억해 둔다. 곧 그 배치(점 찍기)·카드 변화(바꿔 뽑기)를 받아들이는 근거가 된다
         if (v < this[k] && now - this.usedAt[k] > 3000) this.drops[k] = now
@@ -356,27 +377,37 @@ class Engine {
         this[k] = v
       }
       this.abilityUnsure = false
+    } else if (this.numsSeen && sc.unsure) this.abilityUnsure = true
+    // 숫자가 한참 안 읽히면 까닭을 한 번 남긴다 (기록을 받아 보면 무엇이 문제인지 알 수 있게)
+    if (sc.countsFresh) { this.numsFreshAt = now; this.numsStaleLogged = false }
+    else if (!this.numsStaleLogged && now - Math.max(this.numsFreshAt, this.updatedAt) > 4000) {
+      this.numsStaleLogged = true
+      const why = Object.entries(r.why).map(([k, v]) => k + ': ' + v).join(' · ')
+      this.log('화면 숫자 못 읽는 중', why || (sc.unsure ? '모양은 보이지만 개수를 못 정함' : '모양이 자리 잡지 않음'))
     }
-    if (n.next !== null && this.steady('nextNum', String(n.next), need)) {
+    if (sc.nextFresh && sc.next !== null) {
       this.nextAt = now
-      if (n.next !== this.nextAbility) {
+      if (sc.next !== this.nextAbility) {
         // 1 → 7: 방금 7번째 배치였다. 새 아이콘 차례다
-        if (n.next === 7 && this.nextAbility === 1) this.spawnPending = true
-        if (this.nextAbility !== null && !(this.nextAbility === n.next + 1 || (this.nextAbility === 1 && n.next === 7)))
-          this.log('화면 숫자', `다음 능력 ${this.nextAbility} → ${n.next}`)
-        this.nextAbility = n.next
+        if (sc.next === 7 && this.nextAbility === 1) this.spawnPending = true
+        if (this.nextAbility !== null && !(this.nextAbility === sc.next + 1 || (this.nextAbility === 1 && sc.next === 7)))
+          this.log('화면 숫자', `다음 능력 ${this.nextAbility} → ${sc.next}`)
+        this.nextAbility = sc.next
       }
       this.nextUnsure = false
     }
   }
+  private lastScreenEvent = ''
+  private numsFreshAt = 0
+  private numsStaleLogged = false
 
   /**
    * 능력을 썼다고 받아들여도 되나. 화면 숫자를 읽고 있으면 그 숫자가 실제로 줄었을 때만이다.
    * 커서 오독 한 칸을 '점 찍기 사용'으로, 카드 오독을 '바꿔 뽑기 사용'으로 세던 걸 막는다
    */
   private canUse(k: 'dots' | 'swaps') {
-    if (!this.screenCounts) return this[k] > 0
-    const raw = this.nums[k]
+    if (!this.numsSeen) return this[k] > 0
+    const raw = this.screen.raw[k]
     return (raw !== null && raw < this[k]) || Date.now() - this.drops[k] < 3000
   }
 

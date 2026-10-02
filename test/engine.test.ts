@@ -402,6 +402,7 @@ describe('능력 개수는 게임 화면 숫자가 기준', () => {
     const { parseBoard } = await import('../src/lib/core/board')
     const by = (n: string) => PIECES.find((p) => p.name === n)!
     engine.reset()
+    engine.screen.memory = { dots: [], swaps: [], next: [], held: [] } // 앞 테스트에서 배운 모양을 지운다
     engine.board = parseBoard('###.......')
     engine.updatedAt = Date.now()
     engine.nextAbility = 5
@@ -418,8 +419,15 @@ describe('능력 개수는 게임 화면 숫자가 기준', () => {
     return { cards, B, before: engine.board.slice() }
   }
   const none = new Array(16).fill(0)
+  // 숫자마다 뚜렷이 다른 가짜 모양. guess는 획 구조 짐작이 낸 값이다
+  const gl = (d: number | null) => {
+    if (d === null) return null
+    const f = new Array(36).fill(0)
+    f[d] = 10
+    return { f, guess: d, art: '' }
+  }
   const nums = (dots: number | null, swaps: number | null, next: number | null, held: number | null, n = 3) => {
-    for (let i = 0; i < n; i++) engine.syncNumbers({ dots, swaps, next, held }, true)
+    for (let i = 0; i < n; i++) engine.syncNumbers({ dots: gl(dots), swaps: gl(swaps), next: gl(next), held: gl(held), why: {} }, false, true)
   }
 
   test('숫자가 그대로면 한 칸 오독을 점 찍기 사용으로 세지 않는다 (기록 0시 1분 26초)', async () => {
@@ -453,11 +461,40 @@ describe('능력 개수는 게임 화면 숫자가 기준', () => {
     expect(engine.abilityUnsure).toBe(false)
   })
 
-  test('점 찍기 + 바꿔 뽑기가 보유 개수와 안 맞는 프레임(커서가 버튼을 가림)은 믿지 않는다', async () => {
+  test('버튼 숫자 하나가 엉뚱하게 읽혀도(1 + 2 ≠ 5) 그대로 믿지 않고 합으로 바로잡는다', async () => {
     await setup()
     nums(3, 2, 5, 5)
-    nums(1, 2, 5, 5) // 1 + 2 ≠ 5
+    nums(1, 2, 5, 5) // 점 찍기 자리가 1처럼 보인다. 바꿔 뽑기 2와 보유 5는 이미 확인된 모양이다
     expect(engine.dots).toBe(3)
+    expect(engine.swaps).toBe(2)
+  })
+
+  test('버튼 숫자를 못 읽는 동안에도 따라 세기가 개수를 바꾸지 않는다 (보유 6개에서 혼자 줄던 원인)', async () => {
+    const { cards, B, before } = await setup()
+    nums(3, 2, 5, 5)
+    nums(null, null, 5, null, 20) // 버튼 숫자가 한참 안 읽힌다 (전에는 2초 뒤 따라 세기로 돌아갔다)
+    for (let i = 0; i < 5; i++) engine.track(B, none, cards, true)
+    expect(engine.board).toEqual(before) // 한 칸 오독을 점 찍기 사용으로 받지 않는다
+    expect([engine.dots, engine.swaps]).toEqual([3, 2])
+  })
+
+  test('실제 캡처(개수틀어짐.png): 도우미가 점 찍기를 2로 잘못 알고 있어도 화면의 3으로 바로잡는다', async () => {
+    engine.reset()
+    feed('count-off.png', 3)
+    await flush()
+    expect([engine.dots, engine.swaps, engine.nextAbility]).toEqual([3, 2, 2])
+    engine.dots = 2 // 따라 세다가 틀어졌다고 치자 (사용자가 보낸 화면이 이 상태였다)
+    engine.abilityUnsure = true
+    feed('count-off.png', 1)
+    expect(engine.dots).toBe(3)
+    expect(engine.abilityUnsure).toBe(false)
+  })
+
+  test('실제 캡처(능력 꽉 참): 버튼 1 + 6을 읽는다', async () => {
+    engine.reset()
+    feed('full.png', 3)
+    await flush()
+    expect([engine.dots, engine.swaps]).toEqual([1, 6])
   })
 
   test('다음 능력이 1 → 7이 되면 새 아이콘 차례다', async () => {
