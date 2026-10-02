@@ -576,14 +576,17 @@ export function rescue(inp: SolveInput, base: Plan | undefined): Rescue | null {
  *   막혔을 때만 쓰기                                   53.4 · 32,300
  *   꽉 찼고 아이콘을 놓칠 때만 털기 (collect)            53.2 · 32,300
  *   꽉 차면 이득이 될 때 바로, 바꿔 뽑기부터             57.4 · 35,600
- *   꽉 차면 이득이 될 때 바로, 점 찍기부터 (지금 기준)   58.5 · 36,500
+ *   꽉 차면 이득이 될 때 바로, 점 찍기부터              58.5 · 36,500
+ * 7개면 아이콘이 안 생기고 카운트도 멈추는 규칙을 넣고 다시 (30판씩):
+ *   막혔을 때만 52.2 · 31,000 / 7개부터 58.5 · 35,800 / 6개부터 59.0 · 36,600 (지금 기준) / 5개부터 54.1 · 33,100
+ *   꽉 차 있는 동안 능력 공급이 끊기니 6개쯤에서 털어 회전시키는 게 낫고, 5개부터는 위기용이 모자란다
  *
  *  - 바꿔 뽑기가 더 값지다. 어떤 조각이 막혀도 새로 뽑아 살릴 수 있지만 점 찍기는 한 칸만 메운다.
  *    그래서 바꿔 뽑기는 막혔을 때만 쓰고 아껴 둔다
  *  - 점 찍기는 막혔을 때, 또는 이득이 아주 클 때(대개 어떤 조각으로도 못 메우는 구멍이 있는 줄을 지울 때)
- *  - 7개로 꽉 차면 새 아이콘을 못 챙기니, 이득이 되는 순간 점 찍기부터 털어 자리를 둔다
+ *  - 6개 이상이면(7개면 아이콘이 안 생기고 카운트도 멈춘다) 이득이 되는 순간 점 찍기부터 털어 회전시킨다
  */
-export const ADV = { dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 7, keep: 0, capMode: 'any' as 'collect' | 'any', swapFirst: false }
+export const ADV = { dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 6, keep: 0, capMode: 'any' as 'collect' | 'any', swapFirst: false }
 
 /** 계획대로 두면 꽉 차서 못 챙기는 아이콘들 */
 function missedIcons(inp: SolveInput, plan: Plan): Icon['kind'][] {

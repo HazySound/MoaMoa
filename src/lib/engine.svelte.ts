@@ -14,7 +14,7 @@ import { identify, stageOf, type PieceDef } from './core/pieces'
 import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
 import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
-import { detectGrid, isFilledState, isIconState, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
+import { detectGrid, isFilledState, isIconState, readAbilityFull, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
 import type { SolveRequest, SolveResponse } from './solver.worker'
 import SolverWorker from './solver.worker?worker'
 
@@ -84,6 +84,12 @@ class Engine {
    */
   nextAbility = $state<number | null>(null)
   get held() { return this.swaps + this.dots }
+  /** 게임 화면의 '능력이 가득 찼습니다'(주황색 칸)가 떠 있다 */
+  gameFull = $state(false)
+  /** 게임 화면과 도우미가 센 능력 개수가 안 맞는다 (꽉 찼는지 여부로만 안다) */
+  get heldMismatch() { return this.updatedAt > 0 && this.gameFull !== (this.held >= 7) }
+  /** 계산에 쓰는 보유 수. 게임이 꽉 찼다고 하면 7로 본다 */
+  get heldForSolve() { return this.gameFull ? 7 : this.held }
 
   /** 실제로 나온 조각 수 (단계별) */
   pieceCounts = $state<Counts>(loadCounts())
@@ -185,6 +191,7 @@ class Engine {
   private reset() {
     this.updatedAt = 0
     this.iconTrack.clear()
+    this.icons = []
     this.keys = {}
     this.counts = {}
   }
@@ -254,6 +261,11 @@ class Engine {
     }
     if (br.busy) { this.status = 'busy'; return }
     this.status = live ? 'live' : 'image'
+    const full = readAbilityFull(frame.image, g)
+    if (full !== this.gameFull && this.steady('full', String(full), live ? 3 : 1)) {
+      this.gameFull = full
+      this.log(full ? '게임: 능력 꽉 참' : '게임: 능력 자리 있음', `도우미 ${this.held}/7`)
+    }
 
     // 커서·못 읽은 칸은 직전 값을 쓰고 '모름'으로 표시해 둔다. 판 변화를 풀 때 그 칸은 어느 쪽이든 맞는 것으로 본다
     const B = new Array<number>(ROWS).fill(0)
@@ -432,6 +444,7 @@ class Engine {
     this.keys = {}
     this.counts = {}
     this.updatedAt = Date.now()
+    for (const ic of this.iconTrack.values()) ic.fresh = false
     this.requestSolve(fresh ? '새 게임' : '화면과 기억이 달라 다시 맞춰서')
   }
 
@@ -443,12 +456,18 @@ class Engine {
       this.lines += mv.cleared.length
       for (const [idx, ic] of this.iconTrack) {
         if (!mv.cleared.includes(Math.floor(idx / COLS))) continue
+        // 판이 바뀌는 도중에 나타난 아이콘은 이번 배치 뒤에 새로 생긴 것이다. 줄을 지운 직후 빈칸에
+        // 생기므로 방금 지워진 줄에 있을 수 있지만, 지운 줄의 아이콘이 아니라서 획득이 아니다
+        if (ic.fresh) { ic.fresh = false; continue }
+        if (ic.seen < this.iconNeed) { this.iconTrack.delete(idx); continue }
+        // 7개를 들고 있으면 획득하지 못하고 아이콘은 판에 그대로 남는다 (공지)
+        if (this.heldForSolve >= 7) continue
         this.iconTrack.delete(idx)
-        if (ic.seen < this.iconNeed || this.swaps + this.dots >= 7) continue
         got++
         if (ic.kind === 'dot') this.dots++
         else this.swaps++
       }
+      for (const ic of this.iconTrack.values()) ic.fresh = false
       this.publishIcons()
     }
     this.logGame((g) => {
@@ -460,7 +479,8 @@ class Engine {
     })
     if (mv.slot >= 0) {
       this.lastPlacedAt = Date.now()
-      if (this.nextAbility !== null) this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
+      // 7개를 들고 있으면 아이콘이 생기지 않고 카운트도 멈춘다
+      if (this.nextAbility !== null && this.heldForSolve < 7) this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
     }
     this.board = B
     this.updatedAt = Date.now()
@@ -494,7 +514,8 @@ class Engine {
   // ─── 아이콘 ──────────────────────────────────────────────────────────
 
   /** 아이콘은 반짝여서 프레임마다 보였다 안 보였다 한다. 두 번 보이면 있고, 한참 안 보여야 없다 */
-  private iconTrack = new Map<number, { kind: Icon['kind']; seen: number; miss: number }>()
+  /** fresh: 판이 바뀌는 도중(기억한 판과 화면이 다를 때) 처음 나타난 아이콘 */
+  private iconTrack = new Map<number, { kind: Icon['kind']; seen: number; miss: number; fresh: boolean }>()
 
   private iconNeed = 2
   /**
@@ -505,13 +526,18 @@ class Engine {
   private trackIcons(cells: CellState[], B: Board, need: number) {
     this.iconNeed = need
     let changed = false
+    const changing = this.updatedAt > 0 && boardKey(B) !== boardKey(this.board)
     cells.forEach((st, i) => {
       const r = Math.floor(i / COLS), c = i % COLS
       const t = this.iconTrack.get(i)
       if (isIconState(st)) {
         const kind: Icon['kind'] = st.startsWith('icon-dot') ? 'dot' : 'swap'
         if (!t) {
-          this.iconTrack.set(i, { kind, seen: 1, miss: 0 })
+          // 아이콘은 조각을 놓은 직후에만 새로 생긴다(공지). 그 밖에 갑자기 보이는 '아이콘'은
+          // 커서 등을 잘못 본 것이라 받지 않는다. 처음 맞출 때 이미 판에 있던 아이콘은 받는다
+          const justPlaced = Date.now() - this.lastPlacedAt < 3000 || changing
+          if (this.updatedAt && !justPlaced) return
+          this.iconTrack.set(i, { kind, seen: 1, miss: 0, fresh: changing })
           if (need === 1) { changed = true; this.onNewIcon() }
           return
         }
@@ -600,7 +626,7 @@ class Engine {
       id,
       input: {
         board: $state.snapshot(this.board), icons: $state.snapshot(this.icons), hand: $state.snapshot(hand) as (Shape | null)[],
-        heldAbilities: this.swaps + this.dots, swaps: this.swaps, dots: this.dots,
+        heldAbilities: this.heldForSolve, swaps: this.swaps, dots: this.dots,
         weights: blendedWeights(this.pieceCounts, this.stage), style: this.style, budgetMs: this.thinkMs,
       },
     }

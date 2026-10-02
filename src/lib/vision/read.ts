@@ -228,8 +228,19 @@ export function readCell(img: RGBAImage, g: Grid, r: number, c: number): CellSta
     // 아이콘 보라 (220,100,250)은 B가 R보다 크다. 분홍 블록 (245,143,230)은 반대다
     else if (R > 120 && B > R + 12 && G < R - 60) purple++
   }
-  // 커서는 아이콘보다 먼저 본다. 흰 손이 점 찍기 아이콘처럼 하얗다
+  // 커서는 아이콘보다 먼저 본다. 흰 손이 점 찍기 아이콘처럼 하얗다.
+  // 커서의 짙은 회색 외곽선이 칸 가운데를 벗어나 있을 수 있어서 칸 전체에서도 찾는다.
+  // 블록 테두리는 짙어도 채도가 높아서 걸리지 않고, 아이콘에는 이런 외곽선이 없다
   if (dark >= 4 && white >= 6) return 'cursor'
+  if (white >= 3) {
+    let outline = 0
+    const st2 = g.pitch / 16
+    for (let fy = 0.06; fy <= 0.94; fy += st2 / g.pitch) for (let fx = 0.06; fx <= 0.94; fx += st2 / g.pitch) {
+      const [R, G, B] = px(img, x0 + fx * g.pitch, y0 + fy * g.pitch)
+      if (R + G + B < 330 && sat(R, G, B) < 70) outline++
+    }
+    if (outline >= 4) return 'cursor'
+  }
 
   const icon = purple >= 6 ? 'swap' : white >= 6 && satN >= 12 ? 'dot' : null
   if (icon) {
@@ -366,4 +377,18 @@ export function readCard(img: RGBAImage, g: Grid, i: number): CardRead {
 
 export function readCards(img: RGBAImage, g: Grid): CardRead[] {
   return [0, 1, 2].map((i) => readCard(img, g, i))
+}
+
+/**
+ * 능력이 7개로 꽉 차면 오른쪽 '보유 능력' 칸이 주황색('능력이 가득 찼습니다')으로 바뀐다.
+ * 숫자를 읽지 않고 색만 보므로 해상도와 상관없다. 평소엔 연한 하늘색이다.
+ */
+export function readAbilityFull(img: RGBAImage, g: Grid): boolean {
+  let orange = 0, n = 0
+  for (const fy of [10.75, 11.2, 12.2, 12.6]) for (const fx of [11.6, 12.4, 13.4]) {
+    const [r, gg, b] = px(img, g.x + fx * g.pitch, g.y + fy * g.pitch)
+    n++
+    if (r > 200 && gg > 80 && gg < 175 && b < 130) orange++
+  }
+  return orange * 2 > n
 }

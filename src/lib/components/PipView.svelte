@@ -88,9 +88,15 @@
   <div class="abil">
     <span class="flex items-center gap-1" title="바꿔 뽑기"><IconSwap class="size-3.5 text-violet-400" /><b>{engine.swaps}</b></span>
     <span class="flex items-center gap-1" title="점 찍기"><IconDot class="size-3.5 text-sky-400" /><b>{engine.dots}</b></span>
-    <span class="text-ink-400" class:full={engine.held >= 7}>보유 {engine.held}/7</span>
+    <span class="text-ink-400" class:full={engine.held >= 7 || engine.gameFull}>보유 {engine.held}/7</span>
     <span class="ml-auto text-ink-400">다음 능력 <b class="text-ink-100">{engine.nextAbility ?? '?'}</b>번</span>
   </div>
+
+  {#if engine.heldMismatch}
+    <div class="rounded-xl border border-s2/40 bg-s2/10 px-3 py-2 text-xs text-ink-100">
+      {engine.gameFull ? `게임은 능력이 꽉 찼는데(7/7) 도우미는 ${engine.held}개로 알고 있어요. 아래 설정에서 개수를 맞춰 주세요.` : `게임은 능력 자리가 남았는데 도우미는 7개로 알고 있어요. 개수를 맞춰 주세요.`}
+    </div>
+  {/if}
 
   {#if plan?.incomplete}
     <div class="flex items-center gap-2 rounded-xl border border-s3/30 bg-s3/10 px-3 py-2 text-xs text-s3">

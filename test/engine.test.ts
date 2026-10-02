@@ -220,3 +220,58 @@ describe('다음 능력까지', () => {
     expect(engine.nextAbility).toBe(6)
   })
 })
+
+describe('능력 획득 (공지 규칙)', () => {
+  const setup = async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { parseBoard, place } = await import('../src/lib/core/board')
+    const dot = PIECES.find((p) => p.name === '점')!
+    engine.reset()
+    engine.board = parseBoard('#########.') // 맨 아래 줄 9열만 비었다
+    engine.hand = [{ state: 'piece', selected: false, shape: dot.shape, piece: dot }, { state: 'used', selected: false, shape: null, piece: null }, { state: 'used', selected: false, shape: null, piece: null }]
+    engine.plans = []
+    engine.updatedAt = Date.now()
+    engine.swaps = 0
+    engine.dots = 0
+    const res = place(engine.board, dot.shape, 15, 9)
+    const mv = { slot: 0, shape: dot.shape, r: 15, c: 9, cleared: res.cleared, board: res.board }
+    const cells = (iconAt: number | null) => Array.from({ length: 160 }, (_, i) => (i === iconAt ? 'icon-swap' : 'empty'))
+    return { mv, res, cells }
+  }
+
+  test('판이 바뀌기 전부터 있던 아이콘 줄을 지우면 획득', async () => {
+    const { mv, cells } = await setup()
+    engine.lastPlacedAt = Date.now() // 직전 배치 뒤에 생긴 아이콘
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), engine.board, 2)
+    engine.applyMove(mv, mv.board)
+    expect(engine.swaps).toBe(1)
+    expect(engine.icons).toEqual([])
+  })
+
+  test('줄을 지운 직후 그 빈 줄에 새로 생긴 아이콘은 획득이 아니고 판에 남는다', async () => {
+    const { mv, cells } = await setup()
+    // 화면은 이미 놓고 지운 뒤라 기억한 판과 다르다 → 이때 처음 보이는 아이콘은 새것
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), mv.board, 2)
+    engine.applyMove(mv, mv.board)
+    expect(engine.swaps).toBe(0)
+    expect(engine.icons).toEqual([{ r: 15, c: 3, kind: 'swap' }])
+  })
+
+  test('7개를 들고 있으면 줄을 지워도 획득하지 않고 아이콘이 남는다', async () => {
+    const { mv, cells } = await setup()
+    engine.swaps = 4
+    engine.dots = 3
+    engine.lastPlacedAt = Date.now()
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), engine.board, 2)
+    engine.applyMove(mv, mv.board)
+    expect(engine.swaps + engine.dots).toBe(7)
+    expect(engine.icons.length).toBe(1)
+  })
+
+  test('조각을 놓은 직후가 아닌데 갑자기 보이는 아이콘(커서 오인)은 받지 않는다', async () => {
+    const { cells } = await setup()
+    engine.lastPlacedAt = Date.now() - 60_000
+    for (let i = 0; i < 5; i++) engine.trackIcons(cells(5 * 10 + 4), engine.board, 2)
+    expect(engine.icons).toEqual([])
+  })
+})

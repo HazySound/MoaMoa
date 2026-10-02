@@ -95,3 +95,12 @@ describe('커서와 아이콘', () => {
     expect((board.board[7] >> 1) & 1).toBe(1)
   })
 })
+
+describe('능력 꽉 참 표시', () => {
+  test('주황색 칸이면 꽉 참, 평소엔 아니다', async () => {
+    const { readAbilityFull } = await import('../src/lib/vision/read')
+    const at = (f: string) => { const img = load(f); return readAbilityFull(img, detectGrid(img)!) }
+    expect(at('full.png')).toBe(true)
+    for (const f of ['play1.png', 'play3.png', 'cursor.png', 'icon-over1.png', 'stuck-dot.png']) expect(at(f)).toBe(false)
+  })
+})

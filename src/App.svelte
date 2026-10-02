@@ -274,7 +274,7 @@
                 {:else}
                   조각을 놓기 전에 <b class="text-ink-100">바꿔 뽑기</b>로 {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’를 바꾸세요. 이대로면 다음 세트가 위험해요.
                 {/if}
-                {#if engine.held >= 7}<span class="text-ink-400"> 능력이 꽉 차서(7/7) 새 아이콘을 못 챙겨요. 덜 값진 것부터 써서 자리를 비워요.</span>{/if}
+                {#if engine.held >= 6 || engine.gameFull}<span class="text-ink-400"> 능력이 {engine.held}/7이에요. 7개가 되면 새 아이콘이 안 생기니 덜 값진 점 찍기부터 써서 돌려요.</span>{/if}
               </p>
             </div>
           </div>
