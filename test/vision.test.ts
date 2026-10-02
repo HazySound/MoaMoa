@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 import { detectGrid, readBoard, readCards, type Grid } from '../src/lib/vision/read'
 import { parseBoard, printBoard } from '../src/lib/core/board'
 import { identify } from '../src/lib/core/pieces'
+import { whiten } from './helpers'
 
 const load = (f: string) => PNG.sync.read(readFileSync(`test/fixtures/${f}`))
 
@@ -102,5 +103,46 @@ describe('능력 꽉 참 표시', () => {
     const at = (f: string) => { const img = load(f); return readAbilityFull(img, detectGrid(img)!) }
     expect(at('full.png')).toBe(true)
     for (const f of ['play1.png', 'play3.png', 'cursor.png', 'icon-over1.png', 'stuck-dot.png']) expect(at(f)).toBe(false)
+  })
+})
+
+
+describe('아이콘 밑이 블록인가 (underOf)', () => {
+  // 사람이 캡처를 눈으로 보고 확인한 정답. [파일, 행, 열, 블록 위인가]
+  const cases: [string, number, number, boolean][] = [
+    ['icon-on-block', 10, 2, true], ['icon-on-block2', 7, 6, true], ['icon-on-block2', 10, 2, true], ['icon-over2', 10, 8, true],
+    ['cursor', 10, 8, true], ['count-off', 8, 6, true], ['icon-over1', 7, 1, true],
+    ['icon-on-block', 7, 6, false], ['icons-missing', 10, 0, false], ['icons-missing', 11, 5, false], ['icons-missing', 13, 7, false],
+    ['count-off', 1, 4, false], ['count-off', 7, 9, false], ['icon-over1', 4, 8, false], ['icon-over2', 4, 8, false],
+    ['stuck-dot', 7, 4, false], ['stuck-dot', 13, 5, false], ['stuck-dot', 14, 6, false], ['cursor', 4, 8, false],
+  ]
+  test('캡처의 아이콘 칸 19개: 반짝여 밝아져도(0~80%) 같은 답이다', async () => {
+    const { underOf, readCell } = await import('../src/lib/vision/read')
+    for (const [f, r, c, on] of cases) {
+      const img = load(`${f}.png`), g = detectGrid(img) as Grid
+      for (const a of [0, 0.2, 0.35, 0.5, 0.65, 0.8]) {
+        const u = underOf(whiten(img, g, r, c, a) as any, g, r, c)
+        expect(on ? u > 0 : u < 0, `${f} (${r + 1},${c + 1}) 밝기 ${a}: ${u}`).toBe(true)
+      }
+      // 20%만 밝아져도 예전 판별은 뒤집혔다 (실제 화면에서 블록 위 아이콘을 빈칸으로 알던 원인)
+      const st = readCell(whiten(img, g, r, c, 0.2) as any, g, r, c)
+      if (st.startsWith('icon')) expect(st.endsWith('-on'), `${f} (${r + 1},${c + 1})`).toBe(on)
+    }
+  })
+  test('아이콘 없는 칸에서도 블록은 블록, 빈칸은 빈칸이다 (파랑 블록 포함)', async () => {
+    const { underOf } = await import('../src/lib/vision/read')
+    const wrong: string[] = []
+    let n = 0
+    for (const f of ['play1', 'play2', 'play3', 'count-off', 'icons-missing', 'icon-on-block', 'icon-on-block2', 'stuck-dot', 'full']) {
+      const img = load(`${f}.png`), g = detectGrid(img) as Grid
+      readBoard(img, g).cells.forEach((s, i) => {
+        if (s !== 'block' && s !== 'empty') return
+        n++
+        const u = underOf(img, g, Math.floor(i / 10), i % 10)
+        if (s === 'block' ? u <= 0 : u >= 0) wrong.push(`${f} ${Math.floor(i / 10) + 1},${(i % 10) + 1} ${s} → ${u}`)
+      })
+    }
+    expect(n).toBeGreaterThan(1000)
+    expect(wrong).toEqual([])
   })
 })

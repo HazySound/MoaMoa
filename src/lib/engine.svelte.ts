@@ -310,14 +310,18 @@ class Engine {
       // 아이콘 칸도 '모름'이다. 아이콘이 반짝이면 밑이 블록인지 빈칸인지 프레임마다 다르게 읽힌다.
       // 그 칸이 바뀌는 건 조각을 놓거나 줄이 지워질 때뿐이고, 그때는 다른 칸도 함께 바뀌어서 그걸로 안다
       // 배치 미리보기·줄 강조 칸도 '모름'이다. 그동안에도 아이콘은 계속 따라간다
-      if (st === 'cursor' || st === 'unknown' || st === 'hover' || st === 'invalid' || st === 'flash' || isIconState(st)) {
+      // 아이콘이 있다고 아는 칸은 아이콘이 안 읽힌 프레임에도 '모름'이다. 반짝임이 큰 순간에는 아이콘 대신
+      // 블록이나 빈칸으로 읽히는데, 그걸 믿으면 한 칸짜리 판 변화로 보인다
+      const tracked = (this.iconTrack.get(i)?.seen ?? 0) >= this.iconNeed
+      if (st === 'cursor' || st === 'unknown' || st === 'hover' || st === 'invalid' || st === 'flash' || isIconState(st) || tracked) {
         unsure[r] |= 1 << c
         const known = this.updatedAt ? (this.board[r] >> c) & 1 : isFilledState(st) ? 1 : 0
         if (known) B[r] |= 1 << c
       } else if (isFilledState(st)) B[r] |= 1 << c
     })
     this.lastIconRead = { mask: iconMask, filled: iconFilled }
-    this.trackIcons(br.cells, B, live ? 2 : 1)
+    // 미리보기·줄 강조가 떠 있는 동안은 그 색이 칸 가장자리에 겹치므로 아이콘 밑 판별을 쓰지 않는다
+    this.trackIcons(br.cells, B, live ? 2 : 1, br.busy ? null : br.under)
     this.lastUnsure = unsure
     // 능력 숫자는 판 미리보기와 상관없는 자리라 매 프레임 읽는다
     const full = readAbilityFull(frame.image, g)
@@ -782,7 +786,9 @@ class Engine {
    * 반짝여서 잠깐 안 보이는 건 사라진 게 아니다. 처음 보는 아이콘은 연달아 need번 보여야 인정하고,
    * 인정한 아이콘이 아주 오래(약 5초) 빈칸으로만 읽히면 그때서야 잘못 본 것으로 치고 지운다.
    */
-  private trackIcons(cells: CellState[], B: Board, need: number) {
+  private trackIcons(cells: CellState[], B: Board, need: number, under?: Int8Array | null) {
+    // under: 칸마다 '아이콘 밑이 블록인가' (vision underOf). null이면 이번 프레임은 판별하지 않는다.
+    // 안 주면(테스트) 칸 상태에서 얻는다
     this.iconNeed = need
     let changed = false
     const changing = this.updatedAt > 0 && boardKey(B) !== boardKey(this.board)
@@ -840,11 +846,10 @@ class Engine {
           this.onNewIcon()
         }
         if (t.kind !== kind) { t.kind = kind; changed = true }
-        if (t.seen >= need) this.checkUnder(t, i, st.endsWith('-on') ? 1 : -1)
+        if (t.seen >= need && under !== null) this.checkUnder(t, i, under ? under[i] : st.endsWith('-on') ? 2 : -1)
       } else if (t) {
         if (t.seen < need) { this.iconTrack.delete(i); return } // 한 번 보이고 만 것은 잘못 본 것
-        if (st === 'empty') this.checkUnder(t, i, -1)
-        else if (st === 'block') this.checkUnder(t, i, 1)
+        if (under !== null && (st === 'empty' || st === 'block')) this.checkUnder(t, i, under ? under[i] : st === 'block' ? 2 : -1)
         if (st === 'empty' && !((B[r] >> c) & 1) && ++t.miss > 35) {
           this.iconTrack.delete(i)
           changed = true
@@ -869,19 +874,20 @@ class Engine {
   }
 
   /**
-   * 아이콘 칸은 반짝여서 늘 '모름'으로 두고 기억한 값을 쓴다. 그래서 한 번 잘못 기억하면(빈칸인데 블록 등)
-   * 영영 안 고쳐졌다. 아이콘이 있는 동안 밑이 어떻게 읽히는지 쌓아 두고, 한쪽으로 확실히(약 3초) 기울면 기억을 고친다.
-   * 반짝임 때문에 한두 프레임 반대로 읽히는 건 점수가 상쇄돼서 고치지 않는다
+   * 아이콘 칸은 판 변화를 풀 때 '모름'으로 두고 기억한 값을 쓴다. 그 기억이 틀리면(막힌 칸을 뚫렸다고 아는 등)
+   * 못 놓는 자리를 추천하므로, 아이콘 밑이 어떻게 읽히는지(vision underOf)를 쌓아 기억을 바로잡는다.
+   *
+   * 판별값은 2(분홍·노랑·초록 블록, 확실) · 1(파랑 블록) · -1(빈칸) · 0(모름). 캡처로 본 아이콘 칸 19개와 일반 칸
+   * 2,057개에서 반짝임(밝기 0~80%)과 상관없이 틀린 적이 없어서, 같은 쪽으로 4점(두세 프레임~0.6초)이면 고친다.
+   * 예전 판별(가장자리 채도)은 20%만 밝아져도 뒤집혀서, 실제 화면에서는 블록 위 아이콘을 계속 빈칸으로 알았다
    */
   private checkUnder(t: { under: number }, i: number, vote: number) {
-    if (!this.updatedAt) return
-    t.under = Math.max(-30, Math.min(30, t.under + vote))
+    if (!this.updatedAt || !vote) return
+    // 반대쪽 판별이 나오면 쌓던 걸 버리고 새로 센다 (한쪽으로 이어질 때만 고친다)
+    t.under = Math.sign(t.under) === Math.sign(vote) ? Math.max(-8, Math.min(8, t.under + vote)) : vote
     const r = Math.floor(i / COLS), c = i % COLS
     const mem = (this.board[r] >> c) & 1
-    // 블록으로 고치는 쪽은 빨리(약 1.5초), 빈칸으로 고치는 쪽은 천천히(약 4초 내내 빈칸으로 읽힐 때) 한다.
-    // 막힌 칸을 뚫렸다고 알면 못 놓는 자리를 추천하지만, 뚫린 칸을 막혔다고 알면 그 칸을 피할 뿐이라 덜 해롭다.
-    // 한때 블록 → 빈칸만 고쳤는데, 빈칸이라고 잘못 안 뒤 되돌릴 길이 없어 막힌 칸에 놓으라고 추천했다 (캡처 icon-on-block)
-    const seen = t.under >= 10 ? 1 : t.under <= -30 ? 0 : -1
+    const seen = t.under >= 4 ? 1 : t.under <= -4 ? 0 : -1
     if (seen < 0 || mem === seen) return
     t.under = 0
     const B = this.board.slice()

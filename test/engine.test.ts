@@ -625,6 +625,44 @@ describe('아이콘 칸 기억이 틀렸을 때', () => {
     expect([st.r, st.c]).not.toEqual([10, 2])
   })
 
+  test('실제 화면처럼 아이템이 반짝여 칸이 밝아졌다 어두워졌다 해도: 블록 위는 블록으로 고치고, 고친 뒤에도 그대로 둔다', async () => {
+    const { whiten } = await import('./helpers')
+    const a = frame('icon-on-block2.png')
+    // 반짝임: 밝기 0% → 20% → 35% → 50% → 35% → 20% … (20%만 밝아져도 예전 판별은 빈칸 위로 읽었다)
+    const glow = [0, 0.2, 0.35, 0.5, 0.35, 0.2].map((k) => ({ image: whiten(whiten(a.frame.image, a.grid, 7, 6, k), a.grid, 10, 2, k), ox: 0, oy: 0 }))
+    engine.reset()
+    for (let i = 0; i < 3; i++) engine.ingest(glow[0], a.grid, true)
+    await flush()
+    const wrong = engine.board.slice()
+    wrong[7] &= ~(1 << 6)
+    wrong[10] &= ~(1 << 2)
+    engine.board = wrong
+    engine.events = []
+    for (let i = 0; i < 12; i++) engine.ingest(glow[(i + 1) % glow.length], a.grid, true)
+    await flush()
+    expect([(engine.board[7] >> 6) & 1, (engine.board[10] >> 2) & 1]).toEqual([1, 1])
+    // 한참 더 반짝여도 다시 빈칸으로 돌아가지 않는다
+    engine.events = []
+    for (let i = 0; i < 90; i++) engine.ingest(glow[i % glow.length], a.grid, true)
+    await flush()
+    expect([(engine.board[7] >> 6) & 1, (engine.board[10] >> 2) & 1]).toEqual([1, 1])
+    expect(engine.events.filter((e: any) => e.what === '아이콘 칸 바로잡음' || e.what === '설명 안 되는 판')).toEqual([])
+  })
+
+  test('빈칸 위 아이템이 반짝여도 블록으로 바꾸지 않는다', async () => {
+    const { whiten } = await import('./helpers')
+    const a = frame('icon-on-block.png') // ↓8 →7 점 찍기가 빈칸 위에 있다
+    const glow = [0, 0.2, 0.35, 0.5, 0.35, 0.2].map((k) => ({ image: whiten(a.frame.image, a.grid, 7, 6, k), ox: 0, oy: 0 }))
+    engine.reset()
+    for (let i = 0; i < 3; i++) engine.ingest(glow[0], a.grid, true)
+    await flush()
+    engine.events = []
+    for (let i = 0; i < 90; i++) engine.ingest(glow[i % glow.length], a.grid, true)
+    await flush()
+    expect((engine.board[7] >> 6) & 1).toBe(0)
+    expect(engine.events.filter((e: any) => e.what === '아이콘 칸 바로잡음' || e.what === '설명 안 되는 판')).toEqual([])
+  })
+
   test('화면 기준으로 다시 맞출 때 아이템 칸은 기억이 아니라 화면에서 읽은 대로 둔다', async () => {
     engine.reset()
     feed('icon-on-block.png', 3)

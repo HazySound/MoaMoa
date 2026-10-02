@@ -192,6 +192,38 @@ for (const t of [0.22, 0.5, 0.78]) for (const u of [0.22, 0.78]) { RING.push([t,
 const EDGE: [number, number][] = []
 for (const t of [0.12, 0.5, 0.88]) for (const u of [0.08, 0.92]) { EDGE.push([t, u]); EDGE.push([u, t]) }
 
+/** 칸 가장자리를 한 바퀴 (안쪽 8%). 아이콘 밑 판별용 */
+const UNDER: [number, number][] = []
+for (const t of [0.12, 0.3, 0.5, 0.7, 0.88]) for (const u of [0.08, 0.92]) { UNDER.push([t, u]); UNDER.push([u, t]) }
+
+/**
+ * 아이콘이 있는 칸의 밑이 블록인가: 2 블록(분홍·노랑·초록, 확실) · 1 블록(파랑) · -1 빈칸 · 0 모름.
+ *
+ * 아이콘은 반짝이면서 칸 전체를 하얗게 밝힌다. 밝기·채도 기준은 그때마다 틀리므로(20%만 밝아져도 뒤집혔다)
+ * 흰색과 섞여도 변하지 않는 값을 쓴다: 흰색에서 모자란 정도 (255-R, 255-G, 255-B)의 비율.
+ *   판 바탕(청록)   R이 가장 모자라고, B도 R의 0.24~0.33만큼 모자란다 (윗줄 (90,181,215) ~ 아랫줄 (82,195,198))
+ *   파랑 블록       R이 가장 모자라고, B는 거의 안 모자란다 (0.03 이하: (72,218,249), (88,178,254))
+ *   분홍·노랑·초록  R이 아니라 G나 B가 가장 모자란다
+ * 반짝임(푸른 흰빛)이 겹친 바탕은 B 비율이 0.06~0.15까지 내려가서, 0.05~0.1 사이는 어느 쪽으로도 세지 않는다
+ */
+export function underOf(img: RGBAImage, g: Grid, r: number, c: number): number {
+  const x0 = g.x + c * g.pitch, y0 = g.y + r * g.pitch
+  let warm = 0, bg = 0, blue = 0
+  for (const [fx, fy] of UNDER) {
+    const [R, G, B] = px(img, x0 + fx * g.pitch, y0 + fy * g.pitch)
+    const rr = 255 - R, gg = 255 - G, bb = 255 - B
+    const m = Math.max(rr, gg, bb)
+    if (m < 14) continue // 거의 흰색이라 알 수 없다
+    if (rr < 0.8 * m) warm++
+    else if (bb >= 0.1 * rr) bg++
+    else if (bb <= 0.05 * rr) blue++
+  }
+  if (warm >= 4) return 2
+  if (bg >= 6 && blue <= 2) return -1
+  if (blue >= 6 && bg <= 2) return 1
+  return 0
+}
+
 /*
  * 실제 캡처에서 잰 가운데(25~75%) 특징 (test/fixtures):
  *   메이플 커서(흰 손)   흰 15~22, 짙은 회색 외곽선 7~9
@@ -244,13 +276,16 @@ export function readCell(img: RGBAImage, g: Grid, r: number, c: number): CellSta
 
   const icon = purple >= 6 ? 'swap' : white >= 6 && satN >= 12 ? 'dot' : null
   if (icon) {
+    // 밑이 블록인지는 underOf가 먼저 정한다. 못 정할 때만 예전 방식(가장자리 청록·채도)으로 본다.
+    // 예전 방식은 아이콘이 반짝여 칸이 밝아지면 양쪽으로 다 틀렸다 (분홍 블록 위를 빈칸으로, 빈칸 위를 블록으로)
+    const u = underOf(img, g, r, c)
     let edgeTeal = 0, edgeSat = 0
     for (const [fx, fy] of EDGE) {
       const [R, G, B] = px(img, x0 + fx * g.pitch, y0 + fy * g.pitch)
       if (isTeal(R, G, B)) edgeTeal++
       else if (sat(R, G, B) > 70) edgeSat++
     }
-    const onBlock = edgeTeal <= 1 ? edgeSat >= 3 : edgeTeal < 3 && edgeSat > edgeTeal * 2
+    const onBlock = u > 0 ? true : u < 0 ? false : edgeTeal <= 1 ? edgeSat >= 3 : edgeTeal < 3 && edgeSat > edgeTeal * 2
     return icon === 'swap' ? (onBlock ? 'icon-swap-on' : 'icon-swap') : onBlock ? 'icon-dot-on' : 'icon-dot'
   }
   if (colored > n / 2) return 'block'
@@ -275,6 +310,8 @@ export interface BoardRead {
   /** 커서에 가려 못 읽은 칸 번호(r*10+c). 직전에 읽은 값을 그대로 쓴다 */
   cursor: number[]
   cells: CellState[]
+  /** 칸마다 underOf 값 (아이콘 밑이 블록인지: 2·1 블록, -1 빈칸, 0 모름) */
+  under: Int8Array
 }
 
 export function readBoard(img: RGBAImage, g: Grid): BoardRead {
@@ -293,7 +330,9 @@ export function readBoard(img: RGBAImage, g: Grid): BoardRead {
   })
   // 아이콘은 판에 최대 3개다. 그보다 많거나 못 읽은 칸이 많으면 무언가(게임 오버 창 등)가 판을 덮고 있다
   const obscured = icons.length > 3 || unknown > 6
-  return { board, icons, busy, obscured, unknown, cursor, cells }
+  const under = new Int8Array(ROWS * COLS)
+  for (let i = 0; i < under.length; i++) under[i] = underOf(img, g, Math.floor(i / COLS), i % COLS)
+  return { board, icons, busy, obscured, unknown, cursor, cells, under }
 }
 
 // ─── 보유 조각 읽기 ──────────────────────────────────────────────────────
