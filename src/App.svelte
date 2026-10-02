@@ -38,7 +38,7 @@
   let dragging = $state(false)
   let fileInput: HTMLInputElement | undefined = $state()
 
-  const plan = $derived(engine.plan)
+  const plan = $derived(engine.displayPlan)
   const hasData = $derived(engine.updatedAt > 0)
 
   // 단계가 넘어가면 판도 그 단계를 보여 준다
@@ -243,39 +243,36 @@
           </div>
         </div>
 
-        {#if plan?.incomplete}
+        {#if engine.rescue}
+          {@const pre = engine.rescue}
+          <!-- 먼저 할 일: 능력. 무엇을 어떤 순서로 누르는지 그대로 적는다 -->
+          <div class="panel flex gap-3 p-4 text-sm {pre.kind === 'dot' ? 'border-sky-400/40!' : 'border-violet-400/40!'}" transition:slide>
+            {#if pre.kind === 'dot'}<IconDot class="mt-0.5 size-5 shrink-0 text-sky-400" />{:else}<IconSwap class="mt-0.5 size-5 shrink-0 text-violet-400" />{/if}
+            <div class="leading-relaxed">
+              <p class="font-semibold text-ink-100">
+                먼저: {#if pre.kind === 'dot'}점 찍기 쓰기{:else}바꿔 뽑기로 {pre.slot + 1}번 카드 ‘{pieceName(pre.slot)}’ 바꾸기{/if}
+                <span class="ml-1 text-xs font-normal text-ink-400">{pre.proactive ? '써 두면 이득' : '안 쓰면 세 조각을 다 못 놓아요'}</span>
+              </p>
+              <ol class="mt-1.5 grid gap-0.5 text-ink-300">
+                {#if pre.kind === 'dot'}
+                  <li>① 게임 오른쪽 <b class="text-ink-100">점 찍기</b> 버튼을 누르고</li>
+                  <li>② 판에 파란 동그라미로 표시한 칸(↓{pre.r + 1}행 →{pre.c + 1}열)을 클릭</li>
+                  <li class="text-ink-400">③ 그다음 아래 1·2·3 순서대로 놓기</li>
+                {:else}
+                  <li>① 게임 오른쪽 아래 <b class="text-ink-100">바꿔 뽑기</b> 버튼을 누르고</li>
+                  <li>② ‘바꿀 조각을 골라 주세요’가 뜨면 <b class="text-ink-100">{pre.slot + 1}번 카드</b>를 클릭</li>
+                  <li class="text-ink-400">③ 새 조각이 나오면 놓을 순서를 다시 알려 드려요</li>
+                {/if}
+              </ol>
+              {#if pre.proactive && (engine.held >= 6 || engine.gameFull)}<p class="mt-1.5 text-xs text-ink-400">능력이 {engine.held}/7이에요. 7개가 되면 새 아이콘이 안 생겨서 덜 값진 점 찍기부터 써서 돌려요.</p>{/if}
+            </div>
+          </div>
+        {:else if engine.plan?.incomplete}
           <div class="panel flex gap-3 border-s3/30! p-4 text-sm" transition:slide>
             <IconAlert class="mt-0.5 size-5 shrink-0 text-s3" />
             <div class="leading-relaxed">
               <p class="font-semibold text-s3">세 조각을 다 놓을 수 없어요</p>
-              <p class="mt-1 text-ink-300">
-                {#if engine.rescue?.kind === 'dot'}
-                  먼저 <b class="text-ink-100">점 찍기</b>를 판에 표시한 칸(↓{engine.rescue.r + 1}행 →{engine.rescue.c + 1}열)에 쓰세요. 그러면 세 조각을 다 놓을 수 있어요.
-                {:else if engine.rescue?.kind === 'swap'}
-                  <b class="text-ink-100">바꿔 뽑기</b>로 {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’를 바꾸세요. 새 조각이 들어오면 다시 계산해요.
-                {:else if engine.swaps > 0}
-                  <b class="text-ink-100">바꿔 뽑기</b>로 {unplaced.map(({ i }) => `‘${pieceName(i)}’`).join(', ')} 조각을 바꿔 보세요.
-                {:else if engine.dots > 0}
-                  <b class="text-ink-100">점 찍기</b>로 거의 찬 줄을 먼저 지워 자리를 만들어 보세요.
-                {:else}
-                  남은 능력이 없어요. 놓을 수 있는 만큼 놓는 계획을 보여 드려요.
-                {/if}
-              </p>
-            </div>
-          </div>
-        {:else if engine.rescue?.proactive}
-          <div class="panel flex gap-3 border-violet-400/30! p-4 text-sm" transition:slide>
-            {#if engine.rescue.kind === 'dot'}<IconDot class="mt-0.5 size-5 shrink-0 text-sky-400" />{:else}<IconSwap class="mt-0.5 size-5 shrink-0 text-violet-400" />{/if}
-            <div class="leading-relaxed">
-              <p class="font-semibold text-ink-100">능력을 지금 쓰는 게 좋아요 <span class="font-mono text-xs font-normal text-ink-400">+{engine.rescue.gain}</span></p>
-              <p class="mt-1 text-ink-300">
-                {#if engine.rescue.kind === 'dot'}
-                  조각을 놓기 전에 <b class="text-ink-100">점 찍기</b>를 판에 표시한 칸(↓{engine.rescue.r + 1}행 →{engine.rescue.c + 1}열)에 쓰세요. 그 줄이 바로 지워져요.
-                {:else}
-                  조각을 놓기 전에 <b class="text-ink-100">바꿔 뽑기</b>로 {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’를 바꾸세요. 이대로면 다음 세트가 위험해요.
-                {/if}
-                {#if engine.held >= 6 || engine.gameFull}<span class="text-ink-400"> 능력이 {engine.held}/7이에요. 7개가 되면 새 아이콘이 안 생기니 덜 값진 점 찍기부터 써서 돌려요.</span>{/if}
-              </p>
+              <p class="mt-1 text-ink-300">남은 능력이 없어요. 놓을 수 있는 만큼 놓는 계획을 보여 드려요.</p>
             </div>
           </div>
         {/if}

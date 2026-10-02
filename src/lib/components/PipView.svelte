@@ -33,7 +33,9 @@
     real = !real
     try { localStorage.setItem('moamoa.pip.real', real ? '1' : '0') } catch { /* 이번 창에서만 */ }
   }
-  const plan = $derived(engine.plan)
+  const plan = $derived(engine.displayPlan)
+  /** 조각을 놓기 전에 먼저 쓸 능력 */
+  const pre = $derived(engine.rescue)
   const current = $derived(Math.min(engine.stepIdx, Math.max(0, (plan?.steps.length ?? 1) - 1)))
   const focus = $derived(picked ?? current)
   const step = $derived(plan?.steps[focus] ?? null)
@@ -98,29 +100,36 @@
     </div>
   {/if}
 
-  {#if plan?.incomplete}
+  {#if engine.plan?.incomplete && !pre}
     <div class="flex items-center gap-2 rounded-xl border border-s3/30 bg-s3/10 px-3 py-2 text-xs text-s3">
-      <IconAlert class="size-4 shrink-0" />
-      {#if engine.rescue?.kind === 'dot'}
-        점 찍기 먼저 → 표시한 칸 (↓{engine.rescue.r + 1} →{engine.rescue.c + 1})
-      {:else if engine.rescue?.kind === 'swap'}
-        바꿔 뽑기 → {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’
-      {:else}
-        다 못 놓아요 · 놓을 수 있는 만큼만
-      {/if}
-    </div>
-  {:else if engine.rescue?.proactive}
-    <div class="flex items-center gap-2 rounded-xl border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-xs text-ink-100">
-      {#if engine.rescue.kind === 'dot'}
-        <IconDot class="size-4 shrink-0 text-sky-400" />먼저 점 찍기 → 표시한 칸 (↓{engine.rescue.r + 1} →{engine.rescue.c + 1})
-      {:else}
-        <IconSwap class="size-4 shrink-0 text-violet-400" />먼저 바꿔 뽑기 → {engine.rescue.slot + 1}번 ‘{pieceName(engine.rescue.slot)}’
-      {/if}
+      <IconAlert class="size-4 shrink-0" />다 못 놓아요 · 남은 능력이 없어 놓을 수 있는 만큼만
     </div>
   {/if}
 
   {#if engine.solving}
     <div class="rounded-xl bg-fg/[0.04] px-3 py-3 text-center text-xs text-ink-300">새 세트 계산 중 · 잠시만요</div>
+  {:else if pre}
+    <!-- 먼저 할 일: 능력. 무엇을 어떤 순서로 누르는지 그대로 적는다 -->
+    <div class="now pre" style="--c:{pre.kind === 'dot' ? '#38bdf8' : '#a78bfa'}" in:fly={{ y: 10, duration: 350, easing: cubicOut }}>
+      <span class="badge wide">먼저</span>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold">
+          {#if pre.kind === 'dot'}점 찍기 쓰기{:else}바꿔 뽑기로 {pre.slot + 1}번 ‘{pieceName(pre.slot)}’ 바꾸기{/if}
+          <span class="ml-1 text-[10px] font-normal text-ink-400">{pre.proactive ? '써 두면 이득' : '안 쓰면 다 못 놓아요'}</span>
+        </p>
+        <ol class="mt-1 grid gap-0.5 text-[11px] text-ink-200">
+          {#if pre.kind === 'dot'}
+            <li>① 게임 오른쪽 <b>점 찍기</b> 버튼</li>
+            <li>② 판의 <b class="text-sky-300">파란 동그라미 칸</b> 클릭 (↓{pre.r + 1}행 →{pre.c + 1}열)</li>
+            <li class="text-ink-400">그다음 1·2·3 순서대로 놓기</li>
+          {:else}
+            <li>① 게임 오른쪽 아래 <b>바꿔 뽑기</b> 버튼</li>
+            <li>② <b>{pre.slot + 1}번 카드</b>(‘{pieceName(pre.slot)}’) 클릭</li>
+            <li class="text-ink-400">새 조각이 나오면 놓을 순서를 다시 알려 드려요</li>
+          {/if}
+        </ol>
+      </div>
+    </div>
   {:else if step && !done}
     {#key `${engine.planIdx}:${focus}`}
       <div class="now" style="--c:{STEP_COLORS[focus]}" in:fly={{ y: 10, duration: 350, easing: cubicOut }}>
@@ -195,6 +204,7 @@
     border: 1px solid color-mix(in oklab, var(--c) 40%, transparent);
     box-shadow: 0 10px 30px -18px var(--c);
   }
+  .badge.wide { width: auto; padding: 0 0.5rem; border-radius: 0.6rem; font-size: 0.7rem; font-family: var(--font-sans); }
   .badge {
     display: grid; place-items: center; width: 1.7rem; height: 1.7rem; flex-shrink: 0; border-radius: 999px;
     font: 700 0.8rem/1 var(--font-mono); color: var(--color-ink-950); background: var(--c);

@@ -275,3 +275,31 @@ describe('능력 획득 (공지 규칙)', () => {
     expect(engine.icons).toEqual([])
   })
 })
+
+describe('카드 기억이 꼬였을 때', () => {
+  test('새 세트가 뜨자마자 하나를 놓아 버려도 2초 안에 화면 카드로 다시 맞춘다', async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { emptyBoard } = await import('../src/lib/core/board')
+    const by = (n: string) => PIECES.find((p) => p.name === n)!
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.updatedAt = Date.now()
+    // 기억: 이전 세트의 ㄷ만 남았다
+    engine.hand = [
+      { state: 'used', selected: false, shape: null, piece: null },
+      { state: 'used', selected: false, shape: null, piece: null },
+      { state: 'piece', selected: false, shape: by('ㄷ').shape, piece: by('ㄷ') },
+    ]
+    engine.lastUnsure = new Array(16).fill(0)
+    // 화면: 새 세트 ㄱ3 · ㅎ · (하나는 이미 놓아서) 사용 완료
+    const cards = [
+      { state: 'piece', selected: false, shape: by('ㄱ3').shape },
+      { state: 'piece', selected: false, shape: by('ㅎ').shape },
+      { state: 'used', selected: false, shape: null },
+    ]
+    for (let i = 0; i < 20; i++) engine.watchCards(cards, 2)
+    await flush()
+    expect(engine.hand.map((h: any) => (h.state === 'used' ? '사용' : h.piece?.name))).toEqual(['ㄱ3', 'ㅎ', '사용'])
+    expect(engine.events.some((e: any) => e.what === '카드와 기억이 달라 다시 맞춤')).toBe(true)
+  })
+})

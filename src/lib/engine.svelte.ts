@@ -145,6 +145,17 @@ class Engine {
   }
 
   get plan(): Plan | null { return this.plans[this.planIdx] ?? null }
+  /**
+   * 화면에 보여 줄 계획. 능력을 먼저 써야 하면
+   *  - 점 찍기: 찍은 뒤의 계획 (결과가 정해져 있다)
+   *  - 바꿔 뽑기: 없음 (무슨 조각이 나올지 몰라서, 새 조각을 본 뒤 다시 계산한다)
+   */
+  get displayPlan(): Plan | null {
+    const r = this.rescue
+    if (r?.kind === 'dot') return r.plan
+    if (r?.kind === 'swap') return null
+    return this.plan
+  }
   get stage() { return stageOf(this.lines) }
   get live() { return this.capturing }
 
@@ -322,6 +333,24 @@ class Engine {
   /** 판은 그대로인데 카드가 바뀌었다: 회전·반전, 새 세트, 바꿔 뽑기 */
   private watchCards(cards: CardRead[], need: number) {
     const ok = (c: CardRead) => c.state === 'piece' && !!c.shape && !!identify(c.shape)
+
+    // 안전장치: 게임 카드와 기억한 카드가 2초 넘게 계속 다르면 화면 기준으로 다시 맞춘다.
+    // (새 세트가 뜨자마자 하나를 놓아 버려 '세 장 다 새것'을 못 본 경우 등, 어떤 길로 꼬여도 빠져나온다)
+    if (this.hand.length === 3 && cards.every((c) => c.state === 'used' || ok(c))) {
+      const differs = cards.some((c, i) => {
+        const h = this.hand[i]
+        if ((c.state === 'used') !== (h.state === 'used')) return true
+        return c.state === 'piece' && !!h.shape && canonicalKey(c.shape!) !== canonicalKey(h.shape)
+      })
+      if (differs) {
+        if (this.steady('cardMismatch', cardSig(cards), need * 8)) {
+          this.log('카드와 기억이 달라 다시 맞춤', cards.map((c) => (c.shape ? identify(c.shape)?.name : '사용')).join(' '))
+          this.resync(this.board, cards)
+          return
+        }
+      } else this.keys.cardMismatch = ''
+    }
+
     const setDone = this.hand.length !== 3 || this.hand.every((h) => h.state === 'used')
     if (setDone) {
       if (cards.every(ok) && this.steady('set', cardSig(cards), need)) this.newSet(cards)
