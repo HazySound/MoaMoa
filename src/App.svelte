@@ -3,6 +3,7 @@
   import { cubicOut } from 'svelte/easing'
   import { Tween } from 'svelte/motion'
   import { engine } from './lib/engine.svelte'
+  import { updater } from './lib/update.svelte'
   import { pip } from './lib/pip.svelte'
   import { theme } from './lib/theme.svelte'
   import Board from './lib/components/Board.svelte'
@@ -36,6 +37,7 @@
 
   let focus = $state(0)
   let showSource = $state(false)
+  updater.start()
   let eventsCopied = $state(false)
   /** 최근 기록을 텍스트로 복사한다. 능력 개수가 어긋났을 때 이걸 붙여 주면 어디서 틀렸는지 되짚을 수 있다 */
   async function copyEvents() {
@@ -458,7 +460,10 @@
 
   <footer class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-10 text-[11px] text-ink-500">
     <span>조각 {PIECES.length}종 · 판 10×16 · 비공식 팬 도구</span>
-    <span class="font-mono">{__BUILD__}</span>
+    <span class="flex items-center gap-2 font-mono">
+      {#if updater.stale}<button class="rounded-md bg-amber-400/20 px-2 py-0.5 text-amber-300" onclick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>{/if}
+      {__BUILD__}
+    </span>
   </footer>
 </div>
 

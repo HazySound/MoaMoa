@@ -1,6 +1,7 @@
 <script lang="ts">
   import { slide } from 'svelte/transition'
   import { engine } from '../engine.svelte'
+  import { updater } from '../update.svelte'
   import IconSwap from '~icons/lucide/arrow-left-right'
   import IconDot from '~icons/lucide/circle-dot'
   import IconSettings from '~icons/lucide/settings-2'
@@ -23,10 +24,15 @@
 </script>
 
 <div class="wrap">
+  {#if updater.stale}
+    <!-- 새로고침하면 화면 공유를 다시 골라야 해서 자동으로 하지 않고 알리기만 한다 -->
+    <button class="stale" onclick={() => location.reload()}>고친 새 버전이 있어요 · 눌러서 새로고침 (화면 공유를 다시 골라야 해요)</button>
+  {/if}
   <button class="head" onclick={() => (open = !open)}>
     <span class="flex items-center gap-1.5"><IconSettings class="size-3.5" />설정</span>
     <span class="flex items-center gap-2 text-ink-500">
-      {#if !open}<span class="font-mono">◎{engine.dots} ⇄{engine.swaps} · {engine.stage}단계</span>{/if}
+      <!-- 지금 돌고 있는 버전. 작은 창만 보고 플레이해도 고친 판이 반영됐는지 알 수 있게 -->
+      {#if !open}<span class="font-mono">◎{engine.dots} ⇄{engine.swaps} · {engine.stage}단계 · {updater.build}</span>{/if}
       <IconChevron class="size-3.5 transition-transform {open ? '' : 'rotate-180'}" />
     </span>
   </button>
@@ -71,6 +77,7 @@
     border-radius: 0.9rem; background: var(--color-ink-850); border: 1px solid rgb(var(--fg) / 0.1);
     box-shadow: 0 -12px 30px -10px rgb(0 0 0 / 0.5);
   }
+  .stale { display: block; width: 100%; padding: 0.4rem 0.7rem; border-radius: 0.8rem 0.8rem 0 0; font-size: 0.7rem; text-align: left; color: rgb(252 211 77); background: rgb(251 191 36 / 0.14); }
   .head { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 0.45rem 0.7rem; font-size: 0.72rem; color: var(--color-ink-300); }
   .tile { display: grid; justify-items: center; gap: 0.2rem; padding: 0.35rem 0.2rem; border-radius: 0.6rem; background: rgb(var(--fg) / 0.04); }
   .step {

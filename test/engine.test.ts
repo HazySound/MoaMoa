@@ -607,6 +607,24 @@ describe('아이콘 칸 기억이 틀렸을 때', () => {
     expect(engine.events.some((e: any) => e.what === '아이콘 칸 바로잡음' && e.detail.includes('빈칸 → 블록'))).toBe(true)
   })
 
+  test('실제 캡처(둘째): 블록 위 아이템 두 칸을 모두 빈칸으로 알고 1칸 조각을 거기 놓으라던 화면 → 둘 다 바로잡고 추천도 바뀐다', async () => {
+    engine.reset()
+    feed('icon-on-block2.png', 3)
+    await flush()
+    const wrong = engine.board.slice()
+    wrong[7] &= ~(1 << 6) // ↓8 →7
+    wrong[10] &= ~(1 << 2) // ↓11 →3
+    engine.board = wrong
+    feed('icon-on-block2.png', 12)
+    await flush()
+    expect([(engine.board[7] >> 6) & 1, (engine.board[10] >> 2) & 1]).toEqual([1, 1])
+    // 막힌 칸에 놓으라는 추천이 남아 있으면 안 된다
+    const { canPlace } = await import('../src/lib/core/board')
+    const st = engine.plan.steps[0]
+    expect(canPlace(engine.board, st.shape, st.r, st.c)).toBe(true)
+    expect([st.r, st.c]).not.toEqual([10, 2])
+  })
+
   test('화면 기준으로 다시 맞출 때 아이템 칸은 기억이 아니라 화면에서 읽은 대로 둔다', async () => {
     engine.reset()
     feed('icon-on-block.png', 3)
