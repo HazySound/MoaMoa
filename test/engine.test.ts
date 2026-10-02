@@ -11,9 +11,10 @@ import { solve } from '../src/lib/core/solver'
 vi.mock('../src/lib/solver.worker?worker', () => ({
   default: class {
     onmessage: ((e: { data: unknown }) => void) | null = null
+    terminate() {}
     postMessage(req: { id: number; input: Parameters<typeof solve>[0] }) {
       const plans = solve(req.input, 5)
-      queueMicrotask(() => this.onmessage?.({ data: { id: req.id, plans, ms: 0 } }))
+      queueMicrotask(() => this.onmessage?.({ data: { id: req.id, type: 'done', plans, rescue: null, ms: 0 } }))
     }
   },
 }))

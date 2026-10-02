@@ -13,3 +13,4 @@ dist/
 
 # wrangler 로컬 상태
 .wrangler/
+test/tune.log

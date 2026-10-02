@@ -7,6 +7,7 @@
   import Board from './lib/components/Board.svelte'
   import MiniShape from './lib/components/MiniShape.svelte'
   import SourcePreview from './lib/components/SourcePreview.svelte'
+  import Thinking from './lib/components/Thinking.svelte'
   import { PIECES, identify } from './lib/core/pieces'
   import IconScreen from '~icons/lucide/monitor-up'
   import IconStop from '~icons/lucide/square'
@@ -183,11 +184,9 @@
     <main class="grid gap-5 lg:grid-cols-[minmax(0,420px)_1fr]" in:fade>
       <section class="flex flex-col gap-3">
         <div class="relative">
-          <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} />
+          <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
           {#if engine.solving}
-            <div class="absolute inset-0 grid place-items-center rounded-[18px] bg-ink-950/40 backdrop-blur-[2px]" transition:fade={{ duration: 150 }}>
-              <span class="spinner"></span>
-            </div>
+            <div class="absolute inset-0 rounded-[18px]"><Thinking progress={engine.progress} /></div>
           {/if}
         </div>
         {#if plan}
@@ -234,7 +233,11 @@
             <div class="leading-relaxed">
               <p class="font-semibold text-s3">세 조각을 다 놓을 수 없어요</p>
               <p class="mt-1 text-ink-300">
-                {#if engine.swaps > 0}
+                {#if engine.rescue?.kind === 'dot'}
+                  먼저 <b class="text-ink-100">점 찍기</b>를 판에 표시한 칸(↓{engine.rescue.r + 1}행 →{engine.rescue.c + 1}열)에 쓰세요. 그러면 세 조각을 다 놓을 수 있어요.
+                {:else if engine.rescue?.kind === 'swap'}
+                  <b class="text-ink-100">바꿔 뽑기</b>로 {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’를 바꾸세요. 새 조각이 들어오면 다시 계산해요.
+                {:else if engine.swaps > 0}
                   <b class="text-ink-100">바꿔 뽑기</b>로 {unplaced.map(({ i }) => `‘${pieceName(i)}’`).join(', ')} 조각을 바꿔 보세요.
                 {:else if engine.dots > 0}
                   <b class="text-ink-100">점 찍기</b>로 거의 찬 줄을 먼저 지워 자리를 만들어 보세요.
@@ -360,6 +363,17 @@
               </div>
             {/each}
           </div>
+          <label class="block sm:col-span-2">
+            <span class="flex items-center justify-between text-xs text-ink-400">
+              <span>계산 시간</span>
+              <span class="font-mono text-ink-200">{(engine.thinkMs / 1000).toFixed(engine.thinkMs % 1000 ? 2 : 1)}초</span>
+            </span>
+            <input
+              type="range" min="300" max="3000" step="100" bind:value={engine.thinkMs}
+              class="range mt-3 w-full"
+            />
+            <span class="mt-1.5 block text-[11px] text-ink-500">길게 줄수록 다음 세트를 더 많이 가상으로 놓아 보고 골라요. 새 세트부터 적용돼요.</span>
+          </label>
           <p class="text-[11px] leading-relaxed text-ink-500 sm:col-span-2">
             능력과 제거한 줄 수는 판 변화로 자동으로 세요. 중간부터 켰다면 게임 화면에 맞춰 고쳐 주세요.
             지금 {engine.stage}단계 기준으로 다음 조각 확률을 어림해요.
@@ -459,12 +473,6 @@
   .status[data-s='obscured'] i { background: var(--color-s3); }
   @keyframes ping { 70% { box-shadow: 0 0 0 7px rgb(45 212 191 / 0); } 100% { box-shadow: 0 0 0 0 rgb(45 212 191 / 0); } }
 
-  .spinner {
-    width: 28px; height: 28px; border-radius: 50%;
-    border: 3px solid rgb(255 255 255 / 0.12); border-top-color: var(--color-s1);
-    animation: spin 700ms linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   .step-tab {
     flex: 1;

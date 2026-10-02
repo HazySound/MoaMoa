@@ -11,7 +11,7 @@
 import { boardKey, canonicalKey, COLS, emptyBoard, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
 import { explainMove, type Move } from './core/track'
 import { defaultWeights, identify, stageOf, type PieceDef } from './core/pieces'
-import type { Plan, Step } from './core/solver'
+import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
 import type { SolveRequest, SolveResponse } from './solver.worker'
@@ -30,10 +30,10 @@ export interface HandCard {
 
 const PREFS_KEY = 'moamoa.prefs.v1'
 
-interface Prefs { style: number; swaps: number; dots: number; lines: number }
+interface Prefs { style: number; swaps: number; dots: number; lines: number; thinkMs: number }
 
 function loadPrefs(): Prefs {
-  const d: Prefs = { style: 0.2, swaps: 0, dots: 0, lines: 0 }
+  const d: Prefs = { style: 0.2, swaps: 0, dots: 0, lines: 0, thinkMs: 1500 }
   try { return { ...d, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') } } catch { return d }
 }
 
@@ -53,11 +53,17 @@ class Engine {
   updatedAt = $state(0)
 
   plans = $state<Plan[]>([])
+  /** 다 못 놓을 때 능력으로 살리는 방법 */
+  rescue = $state<Rescue | null>(null)
   planIdx = $state(0)
   /** 지금 안내 중인 단계 (0부터) */
   stepIdx = $state(0)
   solving = $state(false)
+  /** 계산 진행률 0~1 */
+  progress = $state(0)
   solveMs = $state(0)
+  /** 세트마다 계산에 쓸 시간 */
+  thinkMs = $state(1500)
 
   style = $state(0.2)
   swaps = $state(0)
@@ -80,9 +86,10 @@ class Engine {
     this.swaps = p.swaps
     this.dots = p.dots
     this.lines = p.lines
+    this.thinkMs = p.thinkMs
     $effect.root(() => {
       $effect(() => {
-        const prefs: Prefs = { style: this.style, swaps: this.swaps, dots: this.dots, lines: this.lines }
+        const prefs: Prefs = { style: this.style, swaps: this.swaps, dots: this.dots, lines: this.lines, thinkMs: this.thinkMs }
         try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* 사생활 보호 모드 */ }
       })
     })
@@ -211,7 +218,7 @@ class Engine {
       const r = Math.floor(i / COLS), c = i % COLS
       if (st === 'block' || ((st === 'cursor' || st === 'unknown') && (this.board[r] >> c) & 1)) B[r] |= 1 << c
     })
-    this.trackIcons(br.cells, B)
+    this.trackIcons(br.cells, B, live ? 2 : 1)
 
     const need = live ? 2 : 1
     const cardsReadable = cards.every((c) => c.state !== 'unknown')
@@ -301,7 +308,7 @@ class Engine {
       for (const [idx, ic] of this.iconTrack) {
         if (!mv.cleared.includes(Math.floor(idx / COLS))) continue
         this.iconTrack.delete(idx)
-        if (ic.seen < 2 || this.swaps + this.dots >= 7) continue
+        if (ic.seen < this.iconNeed || this.swaps + this.dots >= 7) continue
         if (ic.kind === 'dot') this.dots++
         else this.swaps++
       }
@@ -332,21 +339,23 @@ class Engine {
   /** 아이콘은 반짝여서 프레임마다 보였다 안 보였다 한다. 두 번 보이면 있고, 한참 안 보여야 없다 */
   private iconTrack = new Map<number, { kind: Icon['kind']; seen: number; miss: number }>()
 
-  private trackIcons(cells: CellState[], B: Board) {
+  private iconNeed = 2
+  private trackIcons(cells: CellState[], B: Board, need: number) {
+    this.iconNeed = need
     let changed = false
     cells.forEach((st, i) => {
       const r = Math.floor(i / COLS), c = i % COLS
       const t = this.iconTrack.get(i)
       if (isIconCell(st)) {
         const kind: Icon['kind'] = st === 'icon-dot' ? 'dot' : 'swap'
-        if (!t) { this.iconTrack.set(i, { kind, seen: 1, miss: 0 }); return }
-        if (++t.seen === 2) changed = true
+        if (!t) { this.iconTrack.set(i, { kind, seen: 1, miss: 0 }); if (need === 1) changed = true; return }
+        if (++t.seen === need) changed = true
         t.miss = 0
         if (st !== 'icon' && t.kind !== kind) { t.kind = kind; changed = true }
       } else if (t && st !== 'cursor' && st !== 'unknown' && !((B[r] >> c) & 1)) {
         if (++t.miss > 12) {
           this.iconTrack.delete(i)
-          if (t.seen >= 2) changed = true
+          if (t.seen >= need) changed = true
         }
       }
     })
@@ -355,7 +364,7 @@ class Engine {
 
   private publishIcons() {
     this.icons = [...this.iconTrack]
-      .filter(([, t]) => t.seen >= 2)
+      .filter(([, t]) => t.seen >= this.iconNeed)
       .map(([i, t]) => ({ r: Math.floor(i / COLS), c: i % COLS, kind: t.kind }))
   }
 
@@ -368,14 +377,18 @@ class Engine {
   private requestSolve() {
     const hand = this.hand.map((h) => (h.state === 'piece' ? h.shape : null))
     if (!hand.some(Boolean)) { this.plans = []; this.stepIdx = 0; return }
+    // 이전 계산이 아직 돌고 있으면 버린다. 기다리면 새 계산이 그만큼 늦게 끝난다
+    if (this.solving && this.worker) { this.worker.terminate(); this.worker = null }
     this.worker ??= this.makeWorker()
     const id = ++this.reqId
     this.solving = true
+    this.progress = 0
     const req: SolveRequest = {
       id,
       input: {
         board: $state.snapshot(this.board), icons: $state.snapshot(this.icons), hand: $state.snapshot(hand) as (Shape | null)[],
-        heldAbilities: this.swaps + this.dots, weights: defaultWeights(this.stage), style: this.style,
+        heldAbilities: this.swaps + this.dots, swaps: this.swaps, dots: this.dots,
+        weights: defaultWeights(this.stage), style: this.style, budgetMs: this.thinkMs,
       },
     }
     this.worker.postMessage(req)
@@ -384,12 +397,16 @@ class Engine {
   private makeWorker() {
     const w = new SolverWorker()
     w.onmessage = (e: MessageEvent<SolveResponse>) => {
-      if (e.data.id !== this.reqId) return
-      this.plans = e.data.plans
+      const d = e.data
+      if (d.id !== this.reqId) return
+      if (d.type === 'progress') { this.progress = d.progress; return }
+      this.progress = 1
+      this.plans = d.plans
+      this.rescue = d.rescue
       this.planIdx = 0
       this.stepIdx = 0
       this.solving = false
-      this.solveMs = Math.round(e.data.ms)
+      this.solveMs = Math.round(d.ms)
     }
     return w
   }

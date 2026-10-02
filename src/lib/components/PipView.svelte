@@ -4,6 +4,7 @@
   import { engine } from '../engine.svelte'
   import Board from './Board.svelte'
   import MiniShape from './MiniShape.svelte'
+  import Thinking from './Thinking.svelte'
   import IconRotate from '~icons/lucide/rotate-cw'
   import IconFlip from '~icons/lucide/flip-horizontal-2'
   import IconCheck from '~icons/lucide/check'
@@ -58,8 +59,9 @@
 
   <!-- 판 -->
   <div class="fit-box min-h-0 flex-1">
-    <div class="fit">
-      <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} />
+    <div class="fit relative rounded-[14px]">
+      <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
+      {#if engine.solving}<Thinking progress={engine.progress} compact />{/if}
     </div>
   </div>
 
@@ -67,11 +69,19 @@
   {#if plan?.incomplete}
     <div class="flex items-center gap-2 rounded-xl border border-s3/30 bg-s3/10 px-3 py-2 text-xs text-s3">
       <IconAlert class="size-4 shrink-0" />
-      {engine.swaps > 0 ? '다 못 놓아요 · 바꿔 뽑기를 써 보세요' : engine.dots > 0 ? '다 못 놓아요 · 점 찍기를 써 보세요' : '다 못 놓아요 · 놓을 수 있는 만큼만'}
+      {#if engine.rescue?.kind === 'dot'}
+        점 찍기 먼저 → 표시한 칸 (↓{engine.rescue.r + 1} →{engine.rescue.c + 1})
+      {:else if engine.rescue?.kind === 'swap'}
+        바꿔 뽑기 → {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’
+      {:else}
+        다 못 놓아요 · 놓을 수 있는 만큼만
+      {/if}
     </div>
   {/if}
 
-  {#if step && !done}
+  {#if engine.solving}
+    <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-300">새 세트 계산 중 · 잠시만요</div>
+  {:else if step && !done}
     {#key `${engine.planIdx}:${focus}`}
       <div class="now" style="--c:{STEP_COLORS[focus]}" in:fly={{ y: 10, duration: 350, easing: cubicOut }}>
         <span class="badge">{focus + 1}</span>
@@ -96,8 +106,6 @@
     {/key}
   {:else if done}
     <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-300">세트 완료 · 새 조각을 기다리는 중</div>
-  {:else if engine.solving}
-    <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-300">계산 중…</div>
   {:else}
     <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-400">
       {engine.live ? '보유 조각을 읽으면 추천이 떠요' : '원래 창에서 화면 공유를 시작해 주세요'}

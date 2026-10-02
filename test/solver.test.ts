@@ -101,3 +101,24 @@ test('회전 버튼은 시계 방향 (플레이 영상에서 ㅗ 조각이 → �
   expect(down.key).toBe(parseShape('###\n.#.').key)
   expect(rotateCW(down).key).toBe(parseShape('.#\n##\n.#').key)
 })
+
+describe('막혔을 때 능력', () => {
+  // 모든 줄에 빈칸이 하나씩 엇갈려 있어 2칸 이상 조각은 어디에도 못 들어간다
+  const rows = Array.from({ length: 16 }, (_, r) => Array.from({ length: 10 }, (_, c) => (c === (r % 2 ? 1 : 8) ? '.' : '#')).join(''))
+  const b = parseBoard(rows.join('\n'))
+  const base = () => solve({ board: b, icons: [], hand: [piece('ㅡ'), null, null], heldAbilities: 1, weights: defaultWeights(1), style: 0.2 })[0]
+
+  test('점 찍기로 줄을 지워 자리를 만든다', async () => {
+    const { rescue } = await import('../src/lib/core/solver')
+    const plan = base()
+    expect(plan.incomplete).toBe(true)
+    const r = rescue({ board: b, icons: [], hand: [piece('ㅡ'), null, null], heldAbilities: 1, dots: 1, weights: defaultWeights(1), style: 0.2 }, plan)
+    expect(r?.kind).toBe('dot')
+    if (r?.kind === 'dot') expect(r.plan.incomplete).toBe(false)
+  })
+  test('점 찍기가 없으면 못 놓는 조각을 바꿔 뽑기', async () => {
+    const { rescue } = await import('../src/lib/core/solver')
+    const r = rescue({ board: b, icons: [], hand: [piece('ㅡ'), null, null], heldAbilities: 1, swaps: 1, weights: defaultWeights(1), style: 0.2 }, base())
+    expect(r).toEqual({ kind: 'swap', slot: 0 })
+  })
+})

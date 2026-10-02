@@ -7,7 +7,7 @@
   import IconDot from '~icons/lucide/circle-dot'
   import IconPointer from '~icons/lucide/mouse-pointer-2'
 
-  let { board, icons, plan, focus, stepIdx }: {
+  let { board, icons, plan, focus, stepIdx, dot = null }: {
     board: Board
     icons: Icon[]
     plan: Plan | null
@@ -15,6 +15,8 @@
     focus: number
     /** 이미 놓은 단계 수 */
     stepIdx: number
+    /** 점 찍기를 먼저 쓸 칸 */
+    dot?: { r: number; c: number } | null
   } = $props()
 
   const STEP_COLORS = ['var(--color-s1)', 'var(--color-s2)', 'var(--color-s3)']
@@ -80,6 +82,9 @@
         <div class="later" style="--c:{STEP_COLORS[l]}" in:fade={{ duration: 200 }}>
           <span>{l + 1}</span>
         </div>
+      {/if}
+      {#if dot && dot.r === r && dot.c === c}
+        <span class="rescue" in:scale={{ start: 0.3, duration: 400, easing: cubicOut }}><IconDot /></span>
       {/if}
       {#if anchor && anchor[0] === r && anchor[1] === c}
         <span class="pointer" style="--c:{STEP_COLORS[focus]}"><IconPointer /></span>
@@ -164,6 +169,18 @@
     font-size: 15px;
     filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.8)) drop-shadow(0 0 6px var(--c));
     animation: tap 1.4s var(--ease-out-expo) infinite;
+  }
+  .rescue {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    color: #e0f2fe;
+    background: rgb(56 189 248 / 0.85);
+    box-shadow: 0 0 0 2px #e0f2fe inset, 0 0 18px #38bdf8;
+    animation: breathe 1.2s ease-in-out infinite;
   }
   @keyframes breathe {
     0%, 100% { filter: brightness(1); }
