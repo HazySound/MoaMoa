@@ -92,3 +92,28 @@ describe('추천대로 놓기', () => {
     expect(engine.hand.every((h: any) => h.state === 'used')).toBe(true)
   })
 })
+
+describe('같은 조각 두 장', () => {
+  test('추천과 다른 카드(같은 조각)로 같은 자리에 놓아도 다음 단계로 넘어간다', async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { emptyBoard } = await import('../src/lib/core/board')
+    const g = PIECES.find((p) => p.name === 'ㄱ')!
+    const t = PIECES.find((p) => p.name === 'ㅡ')!
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.hand = [g, g, t].map((p) => ({ state: 'piece', selected: false, shape: p.shape, piece: p }))
+    engine.updatedAt = Date.now()
+    engine.plans = solve({ board: engine.board, icons: [], hand: engine.hand.map((h: any) => h.shape), heldAbilities: 0, weights: new Map(PIECES.map((p) => [p.id, 1 / 19])), style: 0.2 }, 1)
+    engine.planIdx = 0
+    engine.stepIdx = 0
+    engine.solving = false
+    const st = engine.plan.steps.find((s: any) => s.slot < 2)
+    // 첫 단계가 ㄱ이 되도록 계획 순서를 고정한다
+    engine.plans = [{ ...engine.plan, steps: [st, ...engine.plan.steps.filter((s: any) => s !== st)] }]
+    const other = st.slot === 0 ? 1 : 0
+    engine.applyMove({ slot: other, shape: st.shape, r: st.r, c: st.c, cleared: st.cleared, board: st.boardAfter }, st.boardAfter)
+    expect(engine.stepIdx).toBe(1)
+    expect(engine.solving).toBe(false)
+    expect(engine.plan.steps.slice(1).some((s: any) => s.slot === st.slot)).toBe(true) // 남은 ㄱ 단계는 아직 안 쓴 카드로
+  })
+})

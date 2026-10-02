@@ -4,7 +4,7 @@
   import { cubicOut } from 'svelte/easing'
 
   /** 추천을 계산하는 동안 판 위에 덮는 진행 표시 */
-  let { progress, compact = false }: { progress: number; compact?: boolean } = $props()
+  let { progress, compact = false, reason = '' }: { progress: number; compact?: boolean; reason?: string } = $props()
 
   const shown = new Tween(0, { duration: 160, easing: cubicOut })
   $effect(() => { shown.target = progress })
@@ -30,6 +30,7 @@
     </svg>
     <p class="text-center font-semibold {compact ? 'text-xs' : 'text-sm'}">최선의 수 찾는 중</p>
     <p class="-mt-1 font-mono text-[11px] text-ink-300">{Math.round(shown.current * 100)}%</p>
+    {#if reason}<p class="max-w-[14rem] text-center text-[11px] text-ink-400">{reason}</p>{/if}
   </div>
 </div>
 

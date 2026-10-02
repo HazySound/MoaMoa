@@ -8,7 +8,7 @@
  *  - 세 조각을 다 놓으면 새 카드 3장을 기다린다
  * 점 찍기(1칸)와 바꿔 뽑기(카드가 다른 조각으로 바뀜)도 알아채서 그때만 다시 계산한다.
  */
-import { ABILITY_SCORE, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
+import { ABILITY_SCORE, popcount, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
 import { explainMove, type Move } from './core/track'
 import { identify, stageOf, type PieceDef } from './core/pieces'
 import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
@@ -59,6 +59,14 @@ class Engine {
   /** 지금 안내 중인 단계 (0부터) */
   stepIdx = $state(0)
   solving = $state(false)
+  /** 마지막 계산을 시작한 까닭 */
+  solveReason = $state('')
+  /** 최근 일어난 일 (인식 화면 보기에 보여 준다. 문제를 제보받을 때 원인을 찾는 용도) */
+  events = $state<{ t: number; what: string; detail: string }[]>([])
+  private log(what: string, detail = '') {
+    this.events = [{ t: Date.now(), what, detail }, ...this.events].slice(0, 30)
+  }
+
   /** 계산 진행률 0~1 */
   progress = $state(0)
   solveMs = $state(0)
@@ -266,7 +274,12 @@ class Engine {
       const mv = explainMove(this.board, B, remaining, true, unsure)
       if (mv) { this.applyMove(mv, mv.board); return }
       // 어떤 배치로도 설명이 안 되는 판이 1.5초 넘게 그대로면 화면을 믿는다
-      if (this.counts.board >= (live ? 10 : 1) && cardsReadable) this.resync(B, cards)
+      if (this.counts.board >= (live ? 10 : 1) && cardsReadable) {
+        let diff = 0
+        for (let r = 0; r < ROWS; r++) diff += popcount((B[r] ^ this.board[r]) & ~unsure[r])
+        if (live) this.log('설명 안 되는 판', `기억과 ${diff}칸 다름`)
+        this.resync(B, cards)
+      }
       return
     }
     this.keys.board = ''
@@ -310,7 +323,7 @@ class Engine {
     if (swapped) {
       this.swaps = Math.max(0, this.swaps - 1)
       this.logGame((g) => g.swapsUsed++)
-      this.requestSolve()
+      this.requestSolve('바꿔 뽑기를 써서')
     }
   }
 
@@ -319,7 +332,7 @@ class Engine {
     // 실시간으로 새 세트를 볼 때만 센다 (스크린샷이나 중간부터 맞춘 세트는 빼서 같은 세트를 두 번 세지 않는다)
     if (this.live) this.recordSet()
     this.updatedAt = Date.now()
-    this.requestSolve()
+    this.requestSolve('새 세트')
   }
 
   private recordSet() {
@@ -355,7 +368,7 @@ class Engine {
     this.keys = {}
     this.counts = {}
     this.updatedAt = Date.now()
-    this.requestSolve()
+    this.requestSolve(fresh ? '새 게임' : '화면과 기억이 달라 다시 맞춰서')
   }
 
   private applyMove(mv: Move, B: Board) {
@@ -386,18 +399,27 @@ class Engine {
     if (mv.slot < 0) {
       // 점 찍기를 썼다
       this.dots = Math.max(0, this.dots - 1)
-      this.requestSolve()
+      this.requestSolve('점 찍기를 써서')
       return
     }
     this.hand = this.hand.map((h, i) => (i === mv.slot ? { ...h, state: 'used', selected: false } : h))
     const plan = this.plan
     const st = plan?.steps[this.stepIdx]
-    if (!this.solving && st && st.slot === mv.slot && boardKey(st.boardAfter) === boardKey(B)) {
+    if (!this.solving && plan && st && boardKey(st.boardAfter) === boardKey(B)) {
+      if (st.slot !== mv.slot) {
+        // 같은 조각이 두 장이면 어느 카드로 놓았는지 판만 봐서는 모른다. 남은 단계의 카드 번호를 맞바꾼다
+        const a = st.slot, b = mv.slot
+        const swapSlot = (x: number) => (x === a ? b : x === b ? a : x)
+        this.plans = this.plans.map((p, i) => (i === this.planIdx ? { ...p, steps: p.steps.map((s, k) => (k < this.stepIdx ? s : { ...s, slot: swapSlot(s.slot) })) } : p))
+      }
       this.stepIdx++
+      this.log('추천대로 놓음', `${this.stepIdx}단계`)
       return
     }
     // 추천과 다르게 놓았다. 남은 조각으로 다시 계산한다
-    if (this.hand.some((h) => h.state === 'piece')) this.requestSolve()
+    const where = `${mv.shape.cells}칸 조각을 ↓${mv.r + 1}행 →${mv.c + 1}열에`
+    if (this.solving) this.log('계산 중에 놓음', where)
+    if (this.hand.some((h) => h.state === 'piece')) this.requestSolve(this.solving ? '계산이 끝나기 전에 놓아서' : '추천과 다른 자리에 놓아서')
     else { this.plans = []; this.stepIdx = 0 }
   }
 
@@ -438,10 +460,12 @@ class Engine {
   // ─── 추천 ────────────────────────────────────────────────────────────
 
   resolve() {
-    this.requestSolve()
+    this.requestSolve('직접 다시 계산')
   }
 
-  private requestSolve() {
+  private requestSolve(reason: string) {
+    this.solveReason = reason
+    this.log('계산', reason)
     const hand = this.hand.map((h) => (h.state === 'piece' ? h.shape : null))
     if (!hand.some(Boolean)) { this.plans = []; this.stepIdx = 0; return }
     // 이전 계산이 아직 돌고 있으면 버린다. 기다리면 새 계산이 그만큼 늦게 끝난다

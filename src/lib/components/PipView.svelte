@@ -5,6 +5,7 @@
   import Board from './Board.svelte'
   import MiniShape from './MiniShape.svelte'
   import Thinking from './Thinking.svelte'
+  import LiveBoard from './LiveBoard.svelte'
   import IconRotate from '~icons/lucide/rotate-cw'
   import IconFlip from '~icons/lucide/flip-horizontal-2'
   import IconCheck from '~icons/lucide/check'
@@ -22,6 +23,13 @@
   }
 
   let picked = $state<number | null>(null)
+  /** 실제 게임 화면 위에 표시할지, 단순화한 판으로 볼지 */
+  let real = $state(readReal())
+  function readReal() { try { return localStorage.getItem('moamoa.pip.real') !== '0' } catch { return true } }
+  function toggleReal() {
+    real = !real
+    try { localStorage.setItem('moamoa.pip.real', real ? '1' : '0') } catch { /* 이번 창에서만 */ }
+  }
   const plan = $derived(engine.plan)
   const current = $derived(Math.min(engine.stepIdx, Math.max(0, (plan?.steps.length ?? 1) - 1)))
   const focus = $derived(picked ?? current)
@@ -39,7 +47,10 @@
 <div class="flex h-dvh flex-col gap-2.5 bg-ink-950 p-2.5 text-ink-100 select-none">
   <!-- 윗줄: 상태 · 단계 · 점수 -->
   <div class="flex items-center justify-between text-xs">
-    <span class="status" data-s={engine.status}><i></i>{STATUS[engine.status]}</span>
+    <span class="flex items-center gap-1.5">
+      <span class="status" data-s={engine.status}><i></i>{STATUS[engine.status]}</span>
+      <button class="view" onclick={toggleReal} title="실제 게임 화면 / 단순화한 판">{real ? '실제' : '도식'}</button>
+    </span>
     {#if plan}
       <div class="flex items-center gap-1.5">
         {#each plan.steps as _, k (k)}
@@ -60,8 +71,12 @@
   <!-- 판 -->
   <div class="fit-box min-h-0 flex-1">
     <div class="fit relative rounded-[14px]">
-      <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
-      {#if engine.solving}<Thinking progress={engine.progress} compact />{/if}
+      {#if real && engine.lastFrame && engine.grid}
+        <LiveBoard frame={engine.lastFrame} grid={engine.grid} {plan} {focus} stepIdx={engine.stepIdx} />
+      {:else}
+        <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
+      {/if}
+      {#if engine.solving}<Thinking progress={engine.progress} reason={engine.solveReason} compact />{/if}
     </div>
   </div>
 
@@ -128,6 +143,10 @@
   .status[data-s='busy'] i, .status[data-s='searching'] i { background: var(--color-s2); }
   .status[data-s='obscured'] i { background: var(--color-s3); }
 
+  .view {
+    padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.68rem; color: var(--color-ink-300);
+    background: rgb(var(--fg) / 0.05); border: 1px solid rgb(var(--fg) / 0.08);
+  }
   .dot {
     display: grid; place-items: center; width: 1.35rem; height: 1.35rem; border-radius: 999px;
     font: 600 0.7rem/1 var(--font-mono); color: var(--c);

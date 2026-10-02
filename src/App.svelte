@@ -202,7 +202,7 @@
         <div class="relative">
           <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
           {#if engine.solving}
-            <div class="absolute inset-0 rounded-[18px]"><Thinking progress={engine.progress} /></div>
+            <div class="absolute inset-0 rounded-[18px]"><Thinking progress={engine.progress} reason={engine.solveReason} /></div>
           {/if}
         </div>
         {#if plan}
@@ -410,6 +410,16 @@
           {#if showSource}
             <div class="px-4 pb-4" transition:slide>
               <SourcePreview frame={engine.lastFrame} grid={engine.grid} />
+              {#if engine.events.length}
+                <ol class="mt-3 max-h-48 overflow-auto rounded-xl bg-fg/[0.03] p-2 font-mono text-[11px] text-ink-400">
+                  {#each engine.events as e (e.t + e.what + e.detail)}
+                    <li class="flex gap-2 px-1 py-0.5">
+                      <span class="text-ink-500">{new Date(e.t).toLocaleTimeString('ko-KR', { hour12: false })}</span>
+                      <span class="text-ink-200">{e.what}</span><span>{e.detail}</span>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
               <div class="mt-3 flex gap-2">
                 <button class="btn ghost sm" onclick={() => engine.resolve()}><IconRefresh class="size-3.5" />다시 계산</button>
               </div>
