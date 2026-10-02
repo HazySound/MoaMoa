@@ -17,6 +17,7 @@
   import IconRotate from '~icons/lucide/rotate-cw'
   import IconFlip from '~icons/lucide/flip-horizontal-2'
   import IconCheck from '~icons/lucide/check'
+  import IconCopy from '~icons/lucide/copy'
   import IconScan from '~icons/lucide/scan-eye'
   import IconShield from '~icons/lucide/shield-check'
   import IconFlame from '~icons/lucide/flame'
@@ -35,6 +36,20 @@
 
   let focus = $state(0)
   let showSource = $state(false)
+  let eventsCopied = $state(false)
+  /** 최근 기록을 텍스트로 복사한다. 능력 개수가 어긋났을 때 이걸 붙여 주면 어디서 틀렸는지 되짚을 수 있다 */
+  async function copyEvents() {
+    const text = [...engine.events].reverse()
+      .map((e) => `${new Date(e.t).toLocaleTimeString('ko-KR', { hour12: false })} ${e.what} ${e.detail}`)
+      .join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      eventsCopied = true
+      setTimeout(() => (eventsCopied = false), 1500)
+    } catch {
+      engine.error = '클립보드에 복사하지 못했어요. 브라우저 권한을 확인해 주세요.'
+    }
+  }
   let dragging = $state(false)
   let fileInput: HTMLInputElement | undefined = $state()
 
@@ -430,6 +445,7 @@
               {/if}
               <div class="mt-3 flex gap-2">
                 <button class="btn ghost sm" onclick={() => engine.resolve()}><IconRefresh class="size-3.5" />다시 계산</button>
+                <button class="btn ghost sm" onclick={copyEvents} disabled={!engine.events.length}>{#if eventsCopied}<IconCheck class="size-3.5" />복사했어요{:else}<IconCopy class="size-3.5" />기록 복사{/if}</button>
               </div>
             </div>
           {/if}

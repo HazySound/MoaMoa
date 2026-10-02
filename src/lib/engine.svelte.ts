@@ -64,7 +64,8 @@ class Engine {
   /** 최근 일어난 일 (인식 화면 보기에 보여 준다. 문제를 제보받을 때 원인을 찾는 용도) */
   events = $state<{ t: number; what: string; detail: string }[]>([])
   private log(what: string, detail = '') {
-    this.events = [{ t: Date.now(), what, detail }, ...this.events].slice(0, 30)
+    // 능력 개수가 어긋난 원인을 한 판 단위로 되짚을 수 있게 넉넉히 남긴다 (30개로는 몇 세트밖에 안 됐다)
+    this.events = [{ t: Date.now(), what, detail }, ...this.events].slice(0, 400)
   }
 
   /** 계산 진행률 0~1 */
@@ -527,6 +528,7 @@ class Engine {
     })
     if (mv.slot >= 0) {
       this.lastPlacedAt = Date.now()
+      this.ignoredIcons.clear()
       // 7개를 들고 있으면 아이콘이 생기지 않고 카운트도 멈춘다
       if (this.nextAbility !== null && this.heldForSolve < 7) {
         this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
@@ -588,13 +590,21 @@ class Engine {
           // 아이콘은 조각을 놓은 직후에만 새로 생긴다(공지). 그 밖에 갑자기 보이는 '아이콘'은
           // 커서 등을 잘못 본 것이라 받지 않는다. 처음 맞출 때 이미 판에 있던 아이콘은 받는다
           const justPlaced = Date.now() - this.lastPlacedAt < 3000 || changing || this.spawnPending
-          if (this.updatedAt && !justPlaced) return
+          if (this.updatedAt && !justPlaced) {
+            // 진짜 아이콘을 못 받으면 그 줄을 지워도 획득을 못 센다. 원인을 찾을 수 있게 칸마다 한 번 남긴다
+            if (!this.ignoredIcons.has(i)) { this.ignoredIcons.add(i); this.log('아이콘 무시', `↓${r + 1} →${c + 1} 놓은 직후가 아님`) }
+            return
+          }
           this.iconTrack.set(i, { kind, seen: 1, miss: 0, fresh: changing })
           if (need === 1) { changed = true; this.onNewIcon() }
           return
         }
         t.miss = 0
-        if (t.seen < need && ++t.seen === need) { changed = true; this.onNewIcon() }
+        if (t.seen < need && ++t.seen === need) {
+          changed = true
+          this.log('새 아이콘', `↓${r + 1} →${c + 1} ${kind === 'dot' ? '점 찍기' : '바꿔 뽑기'}`)
+          this.onNewIcon()
+        }
         if (t.kind !== kind) { t.kind = kind; changed = true }
       } else if (t) {
         if (t.seen < need) { this.iconTrack.delete(i); return } // 한 번 보이고 만 것은 잘못 본 것
@@ -608,7 +618,10 @@ class Engine {
     // 판에는 아이콘이 셋까지만 있다. 넷째가 생기면 가장 먼저 생긴 것이 없어진다
     const confirmed = [...this.iconTrack].filter(([, t]) => t.seen >= need)
     if (confirmed.length > 3) {
-      for (const [i] of confirmed.slice(0, confirmed.length - 3)) this.iconTrack.delete(i)
+      for (const [i] of confirmed.slice(0, confirmed.length - 3)) {
+        this.iconTrack.delete(i)
+        this.log('아이콘 밀려남', `↓${Math.floor(i / COLS) + 1} →${(i % COLS) + 1} 넷째가 생겨서`)
+      }
       changed = true
     }
     if (changed) this.publishIcons()
@@ -616,6 +629,8 @@ class Engine {
 
   /** 마지막으로 조각을 놓은 때. 새 아이콘은 놓은 직후에만 생긴다 */
   private lastPlacedAt = 0
+  /** '아이콘 무시'를 이미 기록한 칸. 배치마다 비운다 (같은 칸을 프레임마다 기록하지 않게) */
+  private ignoredIcons = new Set<number>()
   /**
    * 새 아이콘이 나올 차례다 (7번째 배치를 마쳤거나, 카운트를 믿을 수 없을 때).
    * 놓자마자 다음 조각을 판 위에 올려 미리보기가 오래 떠 있으면 새 아이콘을 늦게 보게 되는데,
