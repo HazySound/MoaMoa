@@ -332,6 +332,68 @@ describe('커서를 아이콘으로 오인 (카운트를 알 때)', () => {
   })
 })
 
+describe('원래 판에 있던 아이콘 (새로고침·화면 공유 다시 시작 뒤)', () => {
+  test('카운트를 알아도, 다른 칸에 놓는 동안 그대로 있는 아이콘은 받는다 (실제 캡처: 템블록오류)', async () => {
+    const { readBoard } = await import('../src/lib/vision/read')
+    const { frame: fr, grid } = frame('icons-missing.png')
+    const br = readBoard(fr.image, grid)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      let t = 1_000_000
+      vi.setSystemTime(t)
+      engine.reset()
+      engine.board = br.board
+      engine.updatedAt = t
+      engine.nextAbility = 4 // 사용자가 맞춰 둔 카운트 (게임과 같다)
+      engine.nextUnsure = false
+      engine.spawnPending = false
+      engine.lastPlacedAt = 0
+      engine.events = []
+      // 놓기 전: 차례가 아니라 받지 않는다 (이때는 커서일 수도 있다)
+      for (let i = 0; i < 10; i++) { vi.setSystemTime((t += 140)); engine.trackIcons(br.cells, engine.board, 2) }
+      expect(engine.icons).toEqual([])
+      // 다른 칸에 조각을 놓았다. 놓은 직후(1.5초 안)는 아직 받지 않는다
+      engine.lastPlacedAt = (t += 140)
+      for (let i = 0; i < 5; i++) { vi.setSystemTime((t += 140)); engine.trackIcons(br.cells, engine.board, 2) }
+      expect(engine.icons).toEqual([])
+      for (let i = 0; i < 10; i++) { vi.setSystemTime((t += 140)); engine.trackIcons(br.cells, engine.board, 2) }
+      expect(engine.icons).toEqual([
+        { r: 10, c: 0, kind: 'dot' },
+        { r: 11, c: 5, kind: 'swap' },
+        { r: 13, c: 7, kind: 'dot' },
+      ])
+      expect(engine.nextAbility).toBe(4) // 카운트는 그대로
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('커서가 잠깐 머문 칸은, 놓은 뒤 그 칸을 떠났으면 받지 않는다', async () => {
+    const { emptyBoard } = await import('../src/lib/core/board')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      let t = 2_000_000
+      vi.setSystemTime(t)
+      engine.reset()
+      engine.board = emptyBoard()
+      engine.updatedAt = t
+      engine.nextAbility = 4
+      engine.nextUnsure = false
+      engine.spawnPending = false
+      const at = (k: number | null) => Array.from({ length: 160 }, (_, i) => (i === k ? 'icon-dot' : 'empty'))
+      for (let i = 0; i < 5; i++) { vi.setSystemTime((t += 140)); engine.trackIcons(at(42), engine.board, 2) }
+      // 커서가 떠나 5초 동안 안 보이다가 조각을 놓았다
+      for (let i = 0; i < 36; i++) { vi.setSystemTime((t += 140)); engine.trackIcons(at(null), engine.board, 2) }
+      engine.lastPlacedAt = (t += 140)
+      vi.setSystemTime((t += 2000))
+      engine.trackIcons(at(42), engine.board, 2)
+      expect(engine.icons).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('아이콘 칸 기억이 틀렸을 때', () => {
   test('빈칸 위 아이콘을 블록으로 기억하고 있으면, 밑이 계속 빈칸으로 읽힐 때 바로잡는다', async () => {
     const { parseBoard } = await import('../src/lib/core/board')
@@ -339,6 +401,7 @@ describe('아이콘 칸 기억이 틀렸을 때', () => {
     engine.board = parseBoard('..........') // 맨 아래 줄 3열에 점 찍기 아이콘 (빈칸)
     engine.updatedAt = Date.now()
     engine.nextUnsure = true // 처음 맞출 때처럼 받는다
+    engine.spawnPending = true
     engine.plans = []
     engine.hand = []
     engine.events = []

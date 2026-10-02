@@ -208,6 +208,7 @@ class Engine {
   private reset() {
     this.updatedAt = 0
     this.iconTrack.clear()
+    this.lingering.clear()
     this.icons = []
     this.keys = {}
     this.counts = {}
@@ -636,6 +637,22 @@ class Engine {
           // 켜지므로 그 사이는 조용히 넘기고 다음 프레임에 받는다 (기록이 '무시'로 어지럽지 않게)
           if (this.updatedAt && why && countKnown && changing) return
           if (this.updatedAt && why) {
+            // 원래 판에 있던 아이콘(새로고침·화면 공유 다시 시작 뒤, 놓친 생성 등)은 차례와 상관없이 받아야 한다.
+            // 커서와 구별하는 법: 조각을 놓을 때 커서는 놓은 자리로 가므로, 다른 칸에 놓는 동안에도 같은 칸에서
+            // 계속 보이고 놓은 뒤 1.5초가 지나도 그대로면 커서가 아니라 진짜 아이콘이다. 카운트는 건드리지 않는다
+            const now = Date.now()
+            const l = this.lingering.get(i)
+            if (!l) this.lingering.set(i, { firstAt: now, lastAt: now })
+            else {
+              l.lastAt = now
+              if (l.firstAt < this.lastPlacedAt && now - this.lastPlacedAt > 1500) {
+                this.lingering.delete(i)
+                this.iconTrack.set(i, { kind, seen: need, miss: 0, fresh: false, under: 0 })
+                changed = true
+                this.log('있던 아이콘 받음', `↓${r + 1} →${c + 1} ${kind === 'dot' ? '점 찍기' : '바꿔 뽑기'} 놓는 동안에도 그대로`)
+                return
+              }
+            }
             // 진짜 아이콘을 못 받으면 그 줄을 지워도 획득을 못 센다. 원인을 찾을 수 있게 칸마다 한 번 남긴다
             if (!this.ignoredIcons.has(i)) { this.ignoredIcons.add(i); this.log('아이콘 무시', `↓${r + 1} →${c + 1} ${why}`) }
             return
@@ -665,6 +682,9 @@ class Engine {
         }
       }
     })
+    // 한동안(4초) 안 보인 후보는 버린다. 반짝임·미리보기로 잠깐 가려지는 건 견디고, 커서가 떠난 자리는 잊는다
+    const now = Date.now()
+    for (const [j, l] of this.lingering) if (now - l.lastAt > 4000 || this.iconTrack.has(j)) this.lingering.delete(j)
     // 판에는 아이콘이 셋까지만 있다. 넷째가 생기면 가장 먼저 생긴 것이 없어진다
     const confirmed = [...this.iconTrack].filter(([, t]) => t.seen >= need)
     if (confirmed.length > 3) {
@@ -700,6 +720,8 @@ class Engine {
 
   /** 마지막으로 조각을 놓은 때. 새 아이콘은 놓은 직후에만 생긴다 */
   private lastPlacedAt = 0
+  /** 받지 않은 아이콘 후보가 처음·마지막으로 보인 때. 배치를 사이에 두고도 그대로면 원래 있던 아이콘이다 */
+  private lingering = new Map<number, { firstAt: number; lastAt: number }>()
   /** '아이콘 무시'를 이미 기록한 칸. 배치마다 비운다 (같은 칸을 프레임마다 기록하지 않게) */
   private ignoredIcons = new Set<number>()
   /**
