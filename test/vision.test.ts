@@ -75,3 +75,23 @@ describe('보유 조각', () => {
     expect(read('hover1.png').cards.map((c) => c.selected)).toEqual([true, false, false])
   })
 })
+
+describe('커서와 아이콘', () => {
+  test('메이플 커서(흰 손)는 점 찍기 아이콘이 아니라 커서다', () => {
+    const { board } = read('cursor.png')
+    expect(board.cells[6 * 10 + 4]).toBe('cursor')
+    expect(board.icons.map((i) => `${i.r},${i.c}`)).toEqual(['4,8', '10,8'])
+  })
+  test('블록 위에 남은 점 찍기 아이콘: 칸은 찬 것으로 읽는다', () => {
+    const { board } = read('icon-over2.png')
+    expect(board.cells[10 * 10 + 8]).toBe('icon-dot-on')
+    expect((board.board[10] >> 8) & 1).toBe(1)
+    expect(board.cells[4 * 10 + 8]).toBe('icon-dot')
+    expect((board.board[4] >> 8) & 1).toBe(0)
+  })
+  test('블록 위에 남은 바꿔 뽑기 아이콘', () => {
+    const { board } = read('icon-over1.png')
+    expect(board.cells[7 * 10 + 1]).toBe('icon-swap-on')
+    expect((board.board[7] >> 1) & 1).toBe(1)
+  })
+})

@@ -70,3 +70,16 @@ describe('실제 캡처로 판 변화 풀기', () => {
     expect(s.cards.map((c) => c.state)).toEqual(['piece', 'piece', 'piece'])
   })
 })
+
+describe('못 읽은 칸', () => {
+  test('커서에 가린 칸은 어느 쪽이든 맞는 것으로 보고 풀고, 실제 판을 돌려준다', () => {
+    const prev = parseBoard('..........')
+    // ㅡ를 맨 아래 0~2열에 놓았는데 1열이 커서에 가려 빈칸으로 읽혔다
+    const seen = parseBoard('#.#.......')
+    const unsure = new Array(16).fill(0); unsure[15] = 1 << 1
+    expect(explainMove(prev, seen, [{ slot: 0, shape: piece('ㅡ') }], false)).toBeNull()
+    const m = explainMove(prev, seen, [{ slot: 0, shape: piece('ㅡ') }], false, unsure)
+    expect(m?.slot).toBe(0)
+    expect(m?.board[15]).toBe(0b111)
+  })
+})

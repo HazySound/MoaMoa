@@ -173,29 +173,35 @@ function refine(sx: Float32Array, sy: Float32Array, g: Grid): Grid {
 
 // ─── 칸 읽기 ─────────────────────────────────────────────────────────────
 
-export type CellState = 'empty' | 'block' | 'icon-swap' | 'icon-dot' | 'icon' | 'hover' | 'invalid' | 'flash' | 'cursor' | 'unknown'
+/**
+ * 칸 하나의 상태. 아이콘은 블록 위에도 그려진다(아이콘 칸에 조각을 놓아도 아이콘이 위에 남는다).
+ * 그래서 아이콘은 밑이 빈칸이면 icon-*, 블록이면 icon-*-on으로 나눈다.
+ */
+export type CellState =
+  | 'empty' | 'block'
+  | 'icon-swap' | 'icon-dot' | 'icon-swap-on' | 'icon-dot-on'
+  | 'hover' | 'invalid' | 'flash' | 'cursor' | 'unknown'
+
+export const isIconState = (s: CellState) => s.startsWith('icon')
+export const isFilledState = (s: CellState) => s === 'block' || s === 'icon-swap-on' || s === 'icon-dot-on'
 
 /** 칸 안쪽 테두리(가장자리에서 22%)를 한 바퀴 돌며 찍는 점들. 가운데의 아이콘이나 커서 끝에 덜 휘둘린다 */
 const RING: [number, number][] = []
 for (const t of [0.22, 0.5, 0.78]) for (const u of [0.22, 0.78]) { RING.push([t, u]); RING.push([u, t]) }
+/** 칸 가장자리(8%) 점들. 아이콘 그림 바깥이라 아이콘 밑이 블록인지 빈칸인지 보인다 */
+const EDGE: [number, number][] = []
+for (const t of [0.12, 0.5, 0.88]) for (const u of [0.08, 0.92]) { EDGE.push([t, u]); EDGE.push([u, t]) }
 
+/*
+ * 실제 캡처에서 잰 가운데(25~75%) 특징 (test/fixtures):
+ *   메이플 커서(흰 손)   흰 15~22, 짙은 회색 외곽선 7~9
+ *   점 찍기 아이콘        흰 10~13, 외곽선 0~1, 파랑·청록 채도 20~33
+ *   바꿔 뽑기 아이콘      보라 20~22
+ *   블록                  흰 0~2, 채도 34~35
+ * 아이콘 밑: 블록이면 가장자리 청록 0개, 빈칸이면 3~7개
+ */
 export function readCell(img: RGBAImage, g: Grid, r: number, c: number): CellState {
   const x0 = g.x + c * g.pitch, y0 = g.y + r * g.pitch
-
-  // 가운데를 촘촘히 훑는다. 바꿔 뽑기 아이콘은 보라색이 넓게 퍼져 있고 주변에 빛번짐이 있어서
-  // 테두리만 봐서는 잡히지 않는다. 메이플 커서(흰 손, 마우스 그림)는 검은 외곽선이 있다
-  let purple = 0, black = 0, white = 0, blue = 0
-  const step = g.pitch / 12
-  for (let fy = 0.25; fy <= 0.75; fy += step / g.pitch) for (let fx = 0.25; fx <= 0.75; fx += step / g.pitch) {
-    const [R, G, B] = px(img, x0 + fx * g.pitch, y0 + fy * g.pitch)
-    if (R + G + B < 200) black++
-    else if (R > 205 && G > 205 && B > 205) white++
-    // 아이콘 보라 (220,100,250)은 B가 R보다 크다. 분홍 블록 (245,143,230)은 반대다
-    else if (R > 120 && B > R + 12 && G < R - 60) purple++
-    else if (B > 200 && R < 120 && !isTeal(R, G, B)) blue++
-  }
-  if (purple >= 6) return 'icon-swap'
-  if (black >= 3) return 'cursor'
 
   let teal = 0, hover = 0, red = 0, flash = 0, colored = 0
   for (const [fx, fy] of RING) {
@@ -210,14 +216,34 @@ export function readCell(img: RGBAImage, g: Grid, r: number, c: number): CellSta
   if (red >= 2) return 'invalid'
   if (hover > n / 2) return 'hover'
   if (flash > n / 2) return 'flash'
-  if (colored > n / 2) return 'block'
-  // 점 찍기 아이콘: 흰 동심원 + 연한 청록 빛번짐. 테두리가 청록으로 안 잡혀도 가운데가 하얗다
-  if (white >= 6 && purple < 3) return 'icon-dot'
-  if (teal * 3 >= n) {
-    // 테두리가 청록 쪽인데 가운데에 그림이 있으면 능력 아이콘이 떠 있는 빈 칸이다
-    if (white + blue < 4) return teal > n / 2 ? 'empty' : 'unknown'
-    return blue >= 3 ? 'icon-dot' : 'icon'
+
+  let purple = 0, dark = 0, white = 0, satN = 0
+  const step = g.pitch / 12
+  for (let fy = 0.25; fy <= 0.75; fy += step / g.pitch) for (let fx = 0.25; fx <= 0.75; fx += step / g.pitch) {
+    const [R, G, B] = px(img, x0 + fx * g.pitch, y0 + fy * g.pitch)
+    const S = sat(R, G, B)
+    if (S > 70) satN++
+    if (R + G + B < 420 && S < 90) dark++
+    else if (R > 205 && G > 205 && B > 205) white++
+    // 아이콘 보라 (220,100,250)은 B가 R보다 크다. 분홍 블록 (245,143,230)은 반대다
+    else if (R > 120 && B > R + 12 && G < R - 60) purple++
   }
+  // 커서는 아이콘보다 먼저 본다. 흰 손이 점 찍기 아이콘처럼 하얗다
+  if (dark >= 4 && white >= 6) return 'cursor'
+
+  const icon = purple >= 6 ? 'swap' : white >= 6 && satN >= 12 ? 'dot' : null
+  if (icon) {
+    let edgeTeal = 0, edgeSat = 0
+    for (const [fx, fy] of EDGE) {
+      const [R, G, B] = px(img, x0 + fx * g.pitch, y0 + fy * g.pitch)
+      if (isTeal(R, G, B)) edgeTeal++
+      else if (sat(R, G, B) > 70) edgeSat++
+    }
+    const onBlock = edgeTeal <= 1 ? edgeSat >= 3 : edgeTeal < 3 && edgeSat > edgeTeal * 2
+    return icon === 'swap' ? (onBlock ? 'icon-swap-on' : 'icon-swap') : onBlock ? 'icon-dot-on' : 'icon-dot'
+  }
+  if (colored > n / 2) return 'block'
+  if (teal > n / 2) return 'empty'
   return 'unknown'
 }
 
@@ -248,8 +274,8 @@ export function readBoard(img: RGBAImage, g: Grid): BoardRead {
   const cursor: number[] = []
   cells.forEach((s, i) => {
     const r = Math.floor(i / COLS), c = i % COLS
-    if (s === 'block') board[r] |= 1 << c
-    else if (s === 'icon-swap' || s === 'icon-dot' || s === 'icon') icons.push({ r, c, kind: s === 'icon-dot' ? 'dot' : 'swap' })
+    if (isFilledState(s)) board[r] |= 1 << c
+    if (isIconState(s)) icons.push({ r, c, kind: s.startsWith('icon-dot') ? 'dot' : 'swap' })
     else if (s === 'hover' || s === 'invalid' || s === 'flash') busy = true
     else if (s === 'unknown') unknown++
     else if (s === 'cursor') cursor.push(i)

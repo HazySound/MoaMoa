@@ -14,7 +14,7 @@ import { identify, stageOf, type PieceDef } from './core/pieces'
 import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
 import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
-import { detectGrid, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
+import { detectGrid, isFilledState, isIconState, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
 import type { SolveRequest, SolveResponse } from './solver.worker'
 import SolverWorker from './solver.worker?worker'
 
@@ -39,7 +39,6 @@ function loadPrefs(): Prefs {
 }
 
 const cardSig = (cards: CardRead[]) => cards.map((c) => (c.state === 'piece' && c.shape ? c.shape.key : c.state)).join('/')
-const isIconCell = (s: CellState) => s === 'icon-swap' || s === 'icon-dot' || s === 'icon'
 
 class Engine {
   status = $state<Status>('idle')
@@ -241,11 +240,15 @@ class Engine {
     if (br.busy) { this.status = 'busy'; return }
     this.status = live ? 'live' : 'image'
 
-    // 커서·못 읽은 칸은 직전 값을 쓴다. 아이콘은 빈 칸 위에 뜬다
+    // 커서·못 읽은 칸은 직전 값을 쓰고 '모름'으로 표시해 둔다. 판 변화를 풀 때 그 칸은 어느 쪽이든 맞는 것으로 본다
     const B = new Array<number>(ROWS).fill(0)
+    const unsure = new Array<number>(ROWS).fill(0)
     br.cells.forEach((st, i) => {
       const r = Math.floor(i / COLS), c = i % COLS
-      if (st === 'block' || ((st === 'cursor' || st === 'unknown') && (this.board[r] >> c) & 1)) B[r] |= 1 << c
+      if (st === 'cursor' || st === 'unknown') {
+        unsure[r] |= 1 << c
+        if ((this.board[r] >> c) & 1) B[r] |= 1 << c
+      } else if (isFilledState(st)) B[r] |= 1 << c
     })
     this.trackIcons(br.cells, B, live ? 2 : 1)
 
@@ -260,8 +263,8 @@ class Engine {
     if (key !== boardKey(this.board)) {
       if (!this.steady('board', key, need)) return
       const remaining = this.hand.flatMap((h, slot) => (h.state === 'piece' && h.shape ? [{ slot, shape: h.shape }] : []))
-      const mv = explainMove(this.board, B, remaining, true)
-      if (mv) { this.applyMove(mv, B); return }
+      const mv = explainMove(this.board, B, remaining, true, unsure)
+      if (mv) { this.applyMove(mv, mv.board); return }
       // 어떤 배치로도 설명이 안 되는 판이 1.5초 넘게 그대로면 화면을 믿는다
       if (this.counts.board >= (live ? 10 : 1) && cardsReadable) this.resync(B, cards)
       return
@@ -410,12 +413,12 @@ class Engine {
     cells.forEach((st, i) => {
       const r = Math.floor(i / COLS), c = i % COLS
       const t = this.iconTrack.get(i)
-      if (isIconCell(st)) {
-        const kind: Icon['kind'] = st === 'icon-dot' ? 'dot' : 'swap'
+      if (isIconState(st)) {
+        const kind: Icon['kind'] = st.startsWith('icon-dot') ? 'dot' : 'swap'
         if (!t) { this.iconTrack.set(i, { kind, seen: 1, miss: 0 }); if (need === 1) changed = true; return }
         if (++t.seen === need) changed = true
         t.miss = 0
-        if (st !== 'icon' && t.kind !== kind) { t.kind = kind; changed = true }
+        if (t.kind !== kind) { t.kind = kind; changed = true }
       } else if (t && st !== 'cursor' && st !== 'unknown' && !((B[r] >> c) & 1)) {
         if (++t.miss > 12) {
           this.iconTrack.delete(i)
