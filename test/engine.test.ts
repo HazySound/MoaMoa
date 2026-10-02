@@ -396,6 +396,80 @@ describe('추천 자리를 찾느라 마우스를 판 위에 대고 있을 때 (
   })
 })
 
+describe('능력 개수는 게임 화면 숫자가 기준', () => {
+  const setup = async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { parseBoard } = await import('../src/lib/core/board')
+    const by = (n: string) => PIECES.find((p) => p.name === n)!
+    engine.reset()
+    engine.board = parseBoard('###.......')
+    engine.updatedAt = Date.now()
+    engine.nextAbility = 5
+    engine.nextUnsure = false
+    engine.swaps = 2
+    engine.dots = 3
+    engine.gameFull = false
+    engine.plans = []
+    engine.events = []
+    engine.hand = ['ㄷ', 'ㅣ', 'ㅂ'].map((n) => ({ state: 'piece', selected: false, shape: by(n).shape, piece: by(n) }))
+    const cards = engine.hand.map((h: any) => ({ state: 'piece', selected: false, shape: h.shape }))
+    const B = parseBoard('###.......').slice()
+    B[7] |= 1 << 4 // ↓8 →5 한 칸이 채워져 보인다
+    return { cards, B, before: engine.board.slice() }
+  }
+  const none = new Array(16).fill(0)
+  const nums = (dots: number | null, swaps: number | null, next: number | null, held: number | null, n = 3) => {
+    for (let i = 0; i < n; i++) engine.syncNumbers({ dots, swaps, next, held }, true)
+  }
+
+  test('숫자가 그대로면 한 칸 오독을 점 찍기 사용으로 세지 않는다 (기록 0시 1분 26초)', async () => {
+    const { cards, B, before } = await setup()
+    nums(3, 2, 5, 5)
+    for (let i = 0; i < 5; i++) engine.track(B, none, cards, true)
+    expect(engine.board).toEqual(before)
+    expect(engine.dots).toBe(3)
+    expect(engine.events.some((e: any) => e.what === '점 찍기 사용')).toBe(false)
+  })
+
+  test('점 찍기 숫자가 실제로 줄면 그 한 칸을 점 찍기로 받는다', async () => {
+    const { cards, B } = await setup()
+    nums(3, 2, 5, 5)
+    nums(2, 2, 5, 4, 1) // 이번 프레임: 숫자가 3 → 2
+    for (let i = 0; i < 2; i++) engine.track(B, none, cards, true)
+    expect(engine.board).toEqual(B)
+    nums(2, 2, 5, 4)
+    expect(engine.dots).toBe(2) // 두 번 빼지 않는다
+  })
+
+  test('도우미가 센 개수가 틀려도 화면 숫자로 바로잡는다', async () => {
+    await setup()
+    engine.abilityUnsure = true
+    nums(3, 2, 4, 5)
+    expect(engine.dots).toBe(3)
+    expect(engine.swaps).toBe(2)
+    nums(4, 2, 4, 6)
+    expect(engine.dots).toBe(4)
+    expect(engine.nextAbility).toBe(4)
+    expect(engine.abilityUnsure).toBe(false)
+  })
+
+  test('점 찍기 + 바꿔 뽑기가 보유 개수와 안 맞는 프레임(커서가 버튼을 가림)은 믿지 않는다', async () => {
+    await setup()
+    nums(3, 2, 5, 5)
+    nums(1, 2, 5, 5) // 1 + 2 ≠ 5
+    expect(engine.dots).toBe(3)
+  })
+
+  test('다음 능력이 1 → 7이 되면 새 아이콘 차례다', async () => {
+    await setup()
+    nums(3, 2, 1, 5)
+    engine.spawnPending = false
+    nums(3, 2, 7, 5)
+    expect(engine.nextAbility).toBe(7)
+    expect(engine.spawnPending).toBe(true)
+  })
+})
+
 describe('원래 판에 있던 아이콘 (새로고침·화면 공유 다시 시작 뒤)', () => {
   test('카운트를 알아도, 다른 칸에 놓는 동안 그대로 있는 아이콘은 받는다 (실제 캡처: 템블록오류)', async () => {
     const { readBoard } = await import('../src/lib/vision/read')

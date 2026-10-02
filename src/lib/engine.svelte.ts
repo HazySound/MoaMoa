@@ -15,6 +15,7 @@ import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, sav
 import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, isFilledState, isIconState, readAbilityFull, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
+import { readAbilityNumbers, type AbilityNumbers } from './vision/digits'
 import type { SolveRequest, SolveResponse } from './solver.worker'
 import SolverWorker from './solver.worker?worker'
 
@@ -209,6 +210,9 @@ class Engine {
     this.updatedAt = 0
     this.iconTrack.clear()
     this.lingering.clear()
+    this.numsAt = 0
+    this.nextAt = 0
+    this.adoptFrames = 0
     this.icons = []
     this.keys = {}
     this.counts = {}
@@ -293,6 +297,8 @@ class Engine {
     })
     this.trackIcons(br.cells, B, live ? 2 : 1)
     this.lastUnsure = unsure
+    // 능력 숫자는 판 미리보기와 상관없는 자리라 매 프레임 읽는다
+    this.syncNumbers(readAbilityNumbers(frame.image, g), live)
     if (br.busy) { this.status = 'busy'; return }
     this.status = live ? 'live' : 'image'
     const full = readAbilityFull(frame.image, g)
@@ -312,6 +318,75 @@ class Engine {
     this.track(B, unsure, cards, live)
   }
 
+  // ─── 능력 숫자 (게임 화면) ─────────────────────────────────────────────
+
+  /** 이번 프레임에 읽은 숫자 (못 읽으면 null) */
+  private nums: AbilityNumbers = { dots: null, swaps: null, next: null, held: null }
+  /** 화면 숫자를 마지막으로 믿을 만하게 읽은 때. 최근이면 개수는 화면이 정하고 따라 세지 않는다 */
+  private numsAt = 0
+  get screenCounts() { return Date.now() - this.numsAt < 2000 }
+  /** '다음 능력 N번'을 마지막으로 믿을 만하게 읽은 때 */
+  private nextAt = 0
+  /** 이 때까지는 보이는 아이콘을 조건 없이 받는다 (화면 기준으로 다시 맞춘 직후) */
+  private adoptFrames = 0
+  /** 화면 숫자가 줄어든 때(아직 배치로 설명 안 된 사용). 사용을 받아들이는 근거가 된다 */
+  private drops = { dots: 0, swaps: 0 }
+  /** 판·카드로 사용을 받아들인 때. 그 직후 숫자가 주는 건 같은 사용이다 */
+  private usedAt = { dots: 0, swaps: 0 }
+
+  /**
+   * 화면 숫자로 개수를 맞춘다. 같은 값이 3프레임 이어져야 믿는다 (커서가 버튼 위를 지나가는 동안의 오독 방지).
+   * 점 찍기 + 바꿔 뽑기가 '보유 개수 N/7'과 안 맞는 프레임은 버린다 (버튼을 커서가 가린 경우 등)
+   */
+  private syncNumbers(n: AbilityNumbers, live: boolean) {
+    const held = n.held ?? (this.gameFull ? 7 : null)
+    if (n.dots !== null && n.swaps !== null && held !== null && n.dots + n.swaps !== held) n = { ...n, dots: null, swaps: null }
+    this.nums = n
+    if (!this.updatedAt) return
+    const need = live ? 3 : 1
+    const now = Date.now()
+    if (n.dots !== null && n.swaps !== null && this.steady('numbers', `${n.dots}/${n.swaps}`, need)) {
+      this.numsAt = now
+      for (const k of ['dots', 'swaps'] as const) {
+        const v = n[k]!
+        if (v === this[k]) continue
+        // 판·카드로 아직 못 본 사용이면 기억해 둔다. 곧 그 배치(점 찍기)·카드 변화(바꿔 뽑기)를 받아들이는 근거가 된다
+        if (v < this[k] && now - this.usedAt[k] > 3000) this.drops[k] = now
+        this.log('화면 숫자', `${k === 'dots' ? '점 찍기' : '바꿔 뽑기'} ${this[k]} → ${v}`)
+        this[k] = v
+      }
+      this.abilityUnsure = false
+    }
+    if (n.next !== null && this.steady('nextNum', String(n.next), need)) {
+      this.nextAt = now
+      if (n.next !== this.nextAbility) {
+        // 1 → 7: 방금 7번째 배치였다. 새 아이콘 차례다
+        if (n.next === 7 && this.nextAbility === 1) this.spawnPending = true
+        if (this.nextAbility !== null && !(this.nextAbility === n.next + 1 || (this.nextAbility === 1 && n.next === 7)))
+          this.log('화면 숫자', `다음 능력 ${this.nextAbility} → ${n.next}`)
+        this.nextAbility = n.next
+      }
+      this.nextUnsure = false
+    }
+  }
+
+  /**
+   * 능력을 썼다고 받아들여도 되나. 화면 숫자를 읽고 있으면 그 숫자가 실제로 줄었을 때만이다.
+   * 커서 오독 한 칸을 '점 찍기 사용'으로, 카드 오독을 '바꿔 뽑기 사용'으로 세던 걸 막는다
+   */
+  private canUse(k: 'dots' | 'swaps') {
+    if (!this.screenCounts) return this[k] > 0
+    const raw = this.nums[k]
+    return (raw !== null && raw < this[k]) || Date.now() - this.drops[k] < 3000
+  }
+
+  /** 능력 사용을 받아들였다. 화면 숫자를 읽고 있으면 개수는 화면이 정하므로 빼지 않는다 */
+  private markUsed(k: 'dots' | 'swaps') {
+    this.usedAt[k] = Date.now()
+    this.drops[k] = 0
+    if (!this.screenCounts) this[k] = Math.max(0, this[k] - 1)
+  }
+
   /** 읽은 판·카드를 기억과 맞춰 본다: 배치로 설명되면 따라가고, 판이 그대로면 카드 변화를 본다 */
   private track(B: Board, unsure: Board, cards: CardRead[], live: boolean) {
     const need = live ? 2 : 1
@@ -321,7 +396,7 @@ class Engine {
       if (!this.steady('board', key, need)) return
       const remaining = this.hand.flatMap((h, slot) => (h.state === 'piece' && h.shape ? [{ slot, shape: h.shape }] : []))
       // 점 찍기는 갖고 있을 때만 후보로 둔다. 아니면 한 칸짜리 잘못 읽음을 점 찍기로 오해한다
-      let mv = explainMove(this.board, B, remaining, this.dots > 0, unsure)
+      let mv = explainMove(this.board, B, remaining, this.canUse('dots'), unsure)
       // 조각을 진짜 놓으면 그 카드는 '사용 완료'(또는 새 세트)로 바뀐다. 카드가 아직 같은 조각으로 보이면 놓은 게 아니라
       // 커서·미리보기를 잘못 읽은 것이다. 특히 1칸 조각을 들고 있으면 한 칸 오독이 전부 '놓음'으로 설명돼 버렸다
       if (mv && mv.slot >= 0 && this.cardStillHeld(cards, mv.slot)) {
@@ -430,7 +505,7 @@ class Engine {
       if (!this.steady(`swap${i}`, canonicalKey(c.shape!), need + 2)) return h
       // 보라 카드(바꿔 뽑기 고르는 화면)를 못 봤으면 바꿔 뽑기가 아니다. 커서가 카드를 가렸거나 새 세트를
       // 덜 그려진 채 읽은 것이다. 개수는 건드리지 않는다 (진짜로 바뀐 거라면 2초 뒤 '카드만 다시 읽음'이 고친다)
-      if (Date.now() - this.swapModeAt > 15_000) {
+      if (Date.now() - this.swapModeAt > 15_000 && !(this.screenCounts && this.canUse('swaps'))) {
         if (!this.keys[`swapIgnored${i}`]) {
           this.keys[`swapIgnored${i}`] = '1'
           this.log('카드 바뀜 무시', `${i + 1}번 ${h.piece?.name ?? '?'}→${identify(c.shape!)?.name ?? '?'} 보라 카드를 못 봄`)
@@ -447,7 +522,7 @@ class Engine {
     if (!changed) return
     this.hand = hand
     if (swapped) {
-      this.swaps = Math.max(0, this.swaps - 1)
+      this.markUsed('swaps')
       this.log('바꿔 뽑기 사용', `${swapWhat}→ ◎${this.dots} ⇄${this.swaps}`)
       this.logGame((g) => g.swapsUsed++)
       this.requestSolve('바꿔 뽑기를 써서')
@@ -548,6 +623,9 @@ class Engine {
     this.keys = {}
     this.counts = {}
     this.updatedAt = Date.now()
+    // 화면을 믿기로 했으니 지금 화면에 보이는 아이콘도 받는다 (차례·빈칸 조건 없이, 처음 맞출 때처럼)
+    // 단, 카드가 그대로라 마우스 오독으로 다시 맞춘 경우는 빼다 (그 커서를 아이콘으로 받을 수 있다)
+    this.adoptFrames = keepCounts ? 0 : 6
     for (const ic of this.iconTrack.values()) ic.fresh = false
     this.requestSolve(fresh ? '새 게임' : '화면과 기억이 달라 다시 맞춰서')
   }
@@ -568,8 +646,11 @@ class Engine {
         if (this.heldForSolve >= 7) { this.log('꽉 차서 못 얻음', ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'); continue }
         this.iconTrack.delete(idx)
         got++
-        if (ic.kind === 'dot') this.dots++
-        else this.swaps++
+        // 화면 숫자를 읽고 있으면 개수는 화면이 정한다 (여기서 더하면 숫자가 먼저 바뀐 경우 두 번 센다)
+        if (!this.screenCounts) {
+          if (ic.kind === 'dot') this.dots++
+          else this.swaps++
+        }
         this.log('능력 획득', `↓${Math.floor(idx / COLS) + 1} →${(idx % COLS) + 1} ${ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'} → ◎${this.dots} ⇄${this.swaps}`)
       }
       this.publishIcons()
@@ -588,7 +669,9 @@ class Engine {
       this.lastPlacedAt = Date.now()
       this.ignoredIcons.clear()
       // 7개를 들고 있으면 아이콘이 생기지 않고 카운트도 멈춘다
-      if (this.nextAbility !== null && this.heldForSolve < 7) {
+      // 화면의 '다음 능력 N번'을 읽고 있으면 그 숫자가 정한다 (차례도 syncNumbers가 1 → 7을 보고 켠다)
+      if (Date.now() - this.nextAt < 2000) { /* 화면 기준 */ }
+      else if (this.nextAbility !== null && this.heldForSolve < 7) {
         this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
         if (this.nextAbility === 7) this.spawnPending = true
       } else if (this.nextAbility === null) this.spawnPending = true
@@ -597,7 +680,7 @@ class Engine {
     this.updatedAt = Date.now()
     if (mv.slot < 0) {
       // 점 찍기를 썼다
-      this.dots = Math.max(0, this.dots - 1)
+      this.markUsed('dots')
       this.log('점 찍기 사용', `→ ◎${this.dots} ⇄${this.swaps}`)
       this.requestSolve('점 찍기를 써서')
       return
@@ -657,8 +740,9 @@ class Engine {
             : countKnown && (st.endsWith('-on') || (this.board[r] >> c) & 1) ? '빈칸이 아님' : ''
           // 7번째 배치 직후에는 판 변화를 확정(applyMove)하기 전 프레임에 아이콘이 먼저 보인다. 차례는 확정 뒤에
           // 켜지므로 그 사이는 조용히 넘기고 다음 프레임에 받는다 (기록이 '무시'로 어지럽지 않게)
-          if (this.updatedAt && why && countKnown && changing) return
-          if (this.updatedAt && why) {
+          const adopting = this.adoptFrames > 0
+          if (this.updatedAt && why && countKnown && changing && !adopting) return
+          if (this.updatedAt && why && !adopting) {
             // 원래 판에 있던 아이콘(새로고침·화면 공유 다시 시작 뒤, 놓친 생성 등)은 차례와 상관없이 받아야 한다.
             // 커서와 구별하는 법: 조각을 놓을 때 커서는 놓은 자리로 가므로, 다른 칸에 놓는 동안에도 같은 칸에서
             // 계속 보이고 놓은 뒤 1.5초가 지나도 그대로면 커서가 아니라 진짜 아이콘이다. 카운트는 건드리지 않는다
@@ -689,7 +773,7 @@ class Engine {
           // 처음 맞출 때(새로고침·화면 공유 시작) 읽은 건 새로 생긴 게 아니라 원래 있던 아이콘이다. 기록에서 헷갈리지 않게 나눈다
           this.log(this.updatedAt ? '새 아이콘' : '판에 있던 아이콘', `↓${r + 1} →${c + 1} ${kind === 'dot' ? '점 찍기' : '바꿔 뽑기'}`)
           // 한 번에 하나만 생긴다. 같이 후보로 잡혔던 다른 칸(커서 등)은 버린다
-          if (this.updatedAt) for (const [j, o] of this.iconTrack) if (j !== i && o.seen < need) this.iconTrack.delete(j)
+          if (this.updatedAt && this.adoptFrames === 0) for (const [j, o] of this.iconTrack) if (j !== i && o.seen < need) this.iconTrack.delete(j)
           this.onNewIcon()
         }
         if (t.kind !== kind) { t.kind = kind; changed = true }
@@ -705,6 +789,7 @@ class Engine {
         }
       }
     })
+    if (this.adoptFrames > 0) this.adoptFrames--
     // 한동안(4초) 안 보인 후보는 버린다. 반짝임·미리보기로 잠깐 가려지는 건 견디고, 커서가 떠난 자리는 잊는다
     const now = Date.now()
     for (const [j, l] of this.lingering) if (now - l.lastAt > 4000 || this.iconTrack.has(j)) this.lingering.delete(j)
