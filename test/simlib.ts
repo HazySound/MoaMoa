@@ -15,8 +15,11 @@ import { rescue, solve, rng } from '../src/lib/core/solver'
 const DOT: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 export const CAP = 500_000
 
+/** 실험용: SMALL=2면 5칸 이하 조각이 두 배 자주 나온다고 가정 */
+const SMALL = +(process.env.SMALL ?? 1)
 function drawPiece(rand: () => number, lines: number): Shape {
-  const w = defaultWeights(stageOf(lines))
+  const w = new Map(defaultWeights(stageOf(lines)))
+  if (SMALL !== 1) for (const p of PIECES) if (p.shape.cells <= 5) w.set(p.id, w.get(p.id)! * SMALL)
   let x = rand() * [...w.values()].reduce((a, b) => a + b, 0)
   for (const p of PIECES) { x -= w.get(p.id)!; if (x <= 0) return p.shape }
   return PIECES.at(-1)!.shape

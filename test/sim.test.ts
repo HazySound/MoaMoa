@@ -4,8 +4,11 @@
  */
 import { test } from 'vitest'
 import { playGame } from './simlib'
+import { W } from '../src/lib/core/solver'
 
 test.skipIf(!process.env.SIM)('self-play', () => {
+  // 가중치를 바꿔 보는 실험: W_JSON='{"p1":200}'
+  if (process.env.W_JSON) Object.assign(W, JSON.parse(process.env.W_JSON))
   const games = +(process.env.GAMES ?? 4), maxSets = +(process.env.SETS ?? 150)
   const style = +(process.env.STYLE ?? 0.2), budget = +(process.env.BUDGET ?? 0), beam = +(process.env.BEAM ?? 160)
   const out: string[] = []
