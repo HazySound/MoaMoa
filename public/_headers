@@ -1,0 +1,9 @@
+# Cloudflare Pages 응답 머리말.
+# index.html은 붙들고 있지 않게 해서 배포 뒤 새로고침 한 번이면 새 버전이 뜨게 한다.
+# 이름에 해시가 붙은 js·css는 내용이 바뀌면 이름도 바뀌므로 오래 둔다.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
