@@ -233,16 +233,26 @@ describe('능력 획득 (공지 규칙)', () => {
     engine.updatedAt = Date.now()
     engine.swaps = 0
     engine.dots = 0
+    // 카운트를 알고 있고, 직전 배치가 7번째라 새 아이콘 차례다
+    engine.nextAbility = 7
+    engine.nextUnsure = false
+    engine.spawnPending = true
+    engine.events = []
     const res = place(engine.board, dot.shape, 15, 9)
     const mv = { slot: 0, shape: dot.shape, r: 15, c: 9, cleared: res.cleared, board: res.board }
     const cells = (iconAt: number | null) => Array.from({ length: 160 }, (_, i) => (i === iconAt ? 'icon-swap' : 'empty'))
-    return { mv, res, cells }
+    // 아이콘은 빈칸에 생기고, 그 뒤 그 칸에 블록이 놓인 상황을 만든다
+    const spawnUnderBlock = () => {
+      engine.board = parseBoard('###.#####.')
+      for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), engine.board, 2)
+      engine.board = parseBoard('#########.')
+    }
+    return { mv, res, cells, spawnUnderBlock }
   }
 
   test('판이 바뀌기 전부터 있던 아이콘 줄을 지우면 획득', async () => {
-    const { mv, cells } = await setup()
-    engine.lastPlacedAt = Date.now() // 직전 배치 뒤에 생긴 아이콘
-    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), engine.board, 2)
+    const { mv, spawnUnderBlock } = await setup()
+    spawnUnderBlock()
     engine.applyMove(mv, mv.board)
     expect(engine.swaps).toBe(1)
     expect(engine.icons).toEqual([])
@@ -250,19 +260,23 @@ describe('능력 획득 (공지 규칙)', () => {
 
   test('줄을 지운 직후 그 빈 줄에 새로 생긴 아이콘은 획득이 아니고 판에 남는다', async () => {
     const { mv, cells } = await setup()
-    // 화면은 이미 놓고 지운 뒤라 기억한 판과 다르다 → 이때 처음 보이는 아이콘은 새것
+    // 이번 배치가 7번째다. 아이콘은 판 변화를 확정하기 전부터 보이지만, 차례는 확정 뒤에 켜진다
+    engine.nextAbility = 1
+    engine.spawnPending = false
     for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), mv.board, 2)
     engine.applyMove(mv, mv.board)
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), mv.board, 2)
     expect(engine.swaps).toBe(0)
     expect(engine.icons).toEqual([{ r: 15, c: 3, kind: 'swap' }])
+    // 확정 전 프레임은 조용히 넘긴다 ('무시' 기록 없음)
+    expect(engine.events.some((e: any) => e.what === '아이콘 무시')).toBe(false)
   })
 
   test('7개를 들고 있으면 줄을 지워도 획득하지 않고 아이콘이 남는다', async () => {
-    const { mv, cells } = await setup()
+    const { mv, spawnUnderBlock } = await setup()
+    spawnUnderBlock()
     engine.swaps = 4
     engine.dots = 3
-    engine.lastPlacedAt = Date.now()
-    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 3), engine.board, 2)
     engine.applyMove(mv, mv.board)
     expect(engine.swaps + engine.dots).toBe(7)
     expect(engine.icons.length).toBe(1)
@@ -270,9 +284,132 @@ describe('능력 획득 (공지 규칙)', () => {
 
   test('조각을 놓은 직후가 아닌데 갑자기 보이는 아이콘(커서 오인)은 받지 않는다', async () => {
     const { cells } = await setup()
+    engine.spawnPending = false
     engine.lastPlacedAt = Date.now() - 60_000
     for (let i = 0; i < 5; i++) engine.trackIcons(cells(5 * 10 + 4), engine.board, 2)
     expect(engine.icons).toEqual([])
+  })
+})
+
+describe('커서를 아이콘으로 오인 (카운트를 알 때)', () => {
+  const setup = async () => {
+    const { emptyBoard } = await import('../src/lib/core/board')
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.updatedAt = Date.now()
+    engine.nextUnsure = false
+    engine.events = []
+  }
+  const cells = (...at: [number, string][]) => Array.from({ length: 160 }, (_, i) => at.find(([k]) => k === i)?.[1] ?? 'empty')
+
+  test('아이콘 차례가 아닌 배치 직후에 보이는 아이콘은 받지 않는다', async () => {
+    await setup()
+    engine.nextAbility = 4 // 이번 배치는 7번째가 아니다
+    engine.spawnPending = false
+    engine.lastPlacedAt = Date.now() // 방금 놓았다
+    for (let i = 0; i < 5; i++) engine.trackIcons(cells([42, 'icon-dot']), engine.board, 2)
+    expect(engine.icons).toEqual([])
+    expect(engine.events.filter((e: any) => e.what === '아이콘 무시').length).toBe(1)
+  })
+
+  test('차례여도 블록 위에서 보이는 것은 받지 않는다 (새 아이콘은 빈칸에만 생긴다)', async () => {
+    await setup()
+    engine.nextAbility = 7
+    engine.spawnPending = true
+    for (let i = 0; i < 3; i++) engine.trackIcons(cells([42, 'icon-dot-on']), engine.board, 2)
+    expect(engine.icons).toEqual([])
+    expect(engine.spawnPending).toBe(true) // 진짜 아이콘을 기다린다
+  })
+
+  test('차례에 두 칸이 같이 후보로 잡혀도 하나만 받는다', async () => {
+    await setup()
+    engine.nextAbility = 7
+    engine.spawnPending = true
+    engine.trackIcons(cells([42, 'icon-swap'], [77, 'icon-dot']), engine.board, 2)
+    engine.trackIcons(cells([42, 'icon-swap'], [77, 'icon-dot']), engine.board, 2)
+    for (let i = 0; i < 3; i++) engine.trackIcons(cells([42, 'icon-swap'], [77, 'icon-dot']), engine.board, 2)
+    expect(engine.icons.length).toBe(1)
+  })
+})
+
+describe('아이콘 칸 기억이 틀렸을 때', () => {
+  test('빈칸 위 아이콘을 블록으로 기억하고 있으면, 밑이 계속 빈칸으로 읽힐 때 바로잡는다', async () => {
+    const { parseBoard } = await import('../src/lib/core/board')
+    engine.reset()
+    engine.board = parseBoard('..........') // 맨 아래 줄 3열에 점 찍기 아이콘 (빈칸)
+    engine.updatedAt = Date.now()
+    engine.nextUnsure = true // 처음 맞출 때처럼 받는다
+    engine.plans = []
+    engine.hand = []
+    engine.events = []
+    const at = 15 * 10 + 2
+    const cells = (s: string) => Array.from({ length: 160 }, (_, i) => (i === at ? s : 'empty'))
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells('icon-dot'), engine.board, 2)
+    expect(engine.icons).toEqual([{ r: 15, c: 2, kind: 'dot' }])
+    // 그런데 기억은 블록이라고 잘못 알고 있다 (스크린샷 제보: ↓16 →3)
+    engine.board = parseBoard('..#.......')
+    for (let i = 0; i < 30; i++) engine.trackIcons(cells(i % 4 ? 'icon-dot' : 'empty'), engine.board, 2)
+    expect((engine.board[15] >> 2) & 1).toBe(0)
+    expect(engine.events.some((e: any) => e.what === '아이콘 칸 바로잡음')).toBe(true)
+    expect(engine.icons.length).toBe(1)
+  })
+
+  test('블록 위 아이콘이 가끔 빈칸 위처럼 읽혀도(반짝임) 블록 기억은 그대로 둔다', async () => {
+    const { parseBoard } = await import('../src/lib/core/board')
+    engine.reset()
+    engine.board = parseBoard('..#.......')
+    engine.updatedAt = Date.now()
+    engine.nextUnsure = true
+    engine.events = []
+    const at = 15 * 10 + 2
+    const cells = (s: string) => Array.from({ length: 160 }, (_, i) => (i === at ? s : 'empty'))
+    for (let i = 0; i < 60; i++) engine.trackIcons(cells(i % 3 ? 'icon-dot-on' : 'icon-dot'), engine.board, 2)
+    expect((engine.board[15] >> 2) & 1).toBe(1)
+  })
+})
+
+describe('바꿔 뽑기 오인', () => {
+  const setup = async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { emptyBoard } = await import('../src/lib/core/board')
+    const by = (n: string) => PIECES.find((p) => p.name === n)!
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.updatedAt = Date.now()
+    engine.nextAbility = 5
+    engine.nextUnsure = false
+    engine.swaps = 3
+    engine.dots = 3
+    engine.plans = []
+    engine.hand = ['ㄷ', 'ㅣ', 'ㅂ'].map((n) => ({ state: 'piece', selected: false, shape: by(n).shape, piece: by(n) }))
+    engine.events = []
+    const card = (n: string) => ({ state: 'piece', selected: false, shape: by(n).shape })
+    return { card }
+  }
+  const purple = { state: 'unknown', selected: false, shape: null }
+
+  test('보라 카드(바꿔 뽑기 고르는 화면)를 못 봤으면 카드가 달리 읽혀도 개수를 줄이지 않는다', async () => {
+    const { card } = await setup()
+    for (let i = 0; i < 6; i++) engine.watchCards([card('ㄷ'), card('ㅎ'), card('ㅂ')], 2)
+    await flush()
+    expect(engine.swaps).toBe(3)
+    expect(engine.events.some((e: any) => e.what === '카드 바뀜 무시')).toBe(true)
+    // 2초 넘게 그대로면 카드만 고친다. 놓친 배치가 없으니 카운트를 '모름'으로 만들지 않는다
+    for (let i = 0; i < 16; i++) engine.watchCards([card('ㄷ'), card('ㅎ'), card('ㅂ')], 2)
+    await flush()
+    expect(engine.hand.map((h: any) => h.piece?.name)).toEqual(['ㄷ', 'ㅎ', 'ㅂ'])
+    expect(engine.swaps).toBe(3)
+    expect(engine.nextUnsure).toBe(false)
+    expect(engine.nextAbility).toBe(5)
+  })
+
+  test('보라 카드를 본 뒤 카드가 바뀌면 바꿔 뽑기 사용으로 센다', async () => {
+    const { card } = await setup()
+    for (let i = 0; i < 3; i++) engine.watchCards([purple, purple, purple], 2)
+    for (let i = 0; i < 6; i++) engine.watchCards([card('ㄷ'), card('ㅎ'), card('ㅂ')], 2)
+    await flush()
+    expect(engine.swaps).toBe(2)
+    expect(engine.hand[1].piece.name).toBe('ㅎ')
   })
 })
 
@@ -365,11 +502,15 @@ describe('능력 획득 누락 (줄을 안 지운 배치에서 생긴 아이콘)
     engine.dots = 0
     engine.plans = []
     engine.hand = [0, 1, 2].map(() => ({ state: 'piece', selected: false, shape: dot.shape, piece: dot }))
-    // 배치 1: 8열에 놓는다 (줄은 안 지워짐). 이 배치 직후 같은 줄 9열... 이 아니라 다른 칸(3,3)에 아이콘이 생긴다
+    engine.nextAbility = 1 // 배치 1이 7번째다
+    engine.nextUnsure = false
+    engine.spawnPending = false
+    // 배치 1: 8열에 놓는다 (줄은 안 지워짐). 이 배치 직후 같은 줄 9열(빈칸)에 아이콘이 생긴다
     const a = place(engine.board, dot.shape, 15, 8)
     const cells = (iconAt: number) => Array.from({ length: 160 }, (_, i) => (i === iconAt ? 'icon-swap' : 'empty'))
-    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 9), a.board, 2) // 판이 바뀌는 중에 처음 보임 → 방금 생김
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 9), a.board, 2) // 판이 바뀌는 중에 처음 보임
     engine.applyMove({ slot: 0, shape: dot.shape, r: 15, c: 8, cleared: a.cleared, board: a.board }, a.board)
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 9), a.board, 2) // 확정 뒤 차례라 받는다
     expect(engine.icons).toEqual([{ r: 15, c: 9, kind: 'swap' }])
     // 배치 2: 아이콘 칸(9열)에 놓아 그 줄을 지운다 → 획득
     const b = place(engine.board, dot.shape, 15, 9)

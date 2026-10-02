@@ -341,18 +341,34 @@ class Engine {
   private watchCards(cards: CardRead[], need: number) {
     const ok = (c: CardRead) => c.state === 'piece' && !!c.shape && !!identify(c.shape)
 
+    // 바꿔 뽑기 버튼을 누르면 '바꿀 조각을 골라 주세요'가 뜨고 카드가 보라색이 된다. 흰/노란 바탕이 아니라
+    // 남은 카드가 모두 '못 읽음'이 된다. 커서는 카드 한 장만 가리므로, 남은 카드가 한꺼번에 못 읽히면 그 화면이다
+    const waiting = this.hand.flatMap((h, i) => (h.state === 'piece' ? [i] : []))
+    if (waiting.length && waiting.every((i) => cards[i].state === 'unknown')) this.swapModeAt = Date.now()
+
     // 안전장치: 게임 카드와 기억한 카드가 2초 넘게 계속 다르면 화면 기준으로 다시 맞춘다.
     // (새 세트가 뜨자마자 하나를 놓아 버려 '세 장 다 새것'을 못 본 경우 등, 어떤 길로 꼬여도 빠져나온다)
     if (this.hand.length === 3 && cards.every((c) => c.state === 'used' || ok(c))) {
+      let usedDiffers = false
       const differs = cards.some((c, i) => {
         const h = this.hand[i]
-        if ((c.state === 'used') !== (h.state === 'used')) return true
+        if ((c.state === 'used') !== (h.state === 'used')) return (usedDiffers = true)
         return c.state === 'piece' && !!h.shape && canonicalKey(c.shape!) !== canonicalKey(h.shape)
       })
       if (differs) {
         if (this.steady('cardMismatch', cardSig(cards), need * 8)) {
-          this.log('카드와 기억이 달라 다시 맞춤', cards.map((c) => (c.shape ? identify(c.shape)?.name : '사용')).join(' '))
-          this.resync(this.board, cards)
+          const names = cards.map((c) => (c.shape ? identify(c.shape)?.name : '사용')).join(' ')
+          if (usedDiffers) {
+            this.log('카드와 기억이 달라 다시 맞춤', names)
+            this.resync(this.board, cards)
+          } else {
+            // 조각 모양만 다르다 (새 세트를 덜 그려진 채 읽었거나 바꿔 뽑기를 못 봤다). 판은 그대로라 놓친 배치가 없으니
+            // 카드만 고친다. 전체 다시 맞춤은 카운트를 '모름'으로 만들어 커서를 아이콘으로 받는 창을 넓혔다
+            this.log('카드만 다시 읽음', names)
+            this.hand = this.hand.map((h, i) => (h.state === 'piece' && ok(cards[i]) ? { ...h, shape: cards[i].shape, piece: identify(cards[i].shape!) } : h))
+            this.keys.cardMismatch = ''
+            this.requestSolve('카드를 다시 읽어서')
+          }
           return
         }
       } else this.keys.cardMismatch = ''
@@ -395,6 +411,17 @@ class Engine {
       }
       // 다른 조각이 됐다: 바꿔 뽑기. 커서 겹침으로 잘못 읽은 것과 구별하려고 조금 더 기다린다
       if (!this.steady(`swap${i}`, canonicalKey(c.shape!), need + 2)) return h
+      // 보라 카드(바꿔 뽑기 고르는 화면)를 못 봤으면 바꿔 뽑기가 아니다. 커서가 카드를 가렸거나 새 세트를
+      // 덜 그려진 채 읽은 것이다. 개수는 건드리지 않는다 (진짜로 바뀐 거라면 2초 뒤 '카드만 다시 읽음'이 고친다)
+      if (Date.now() - this.swapModeAt > 15_000) {
+        if (!this.keys[`swapIgnored${i}`]) {
+          this.keys[`swapIgnored${i}`] = '1'
+          this.log('카드 바뀜 무시', `${i + 1}번 ${h.piece?.name ?? '?'}→${identify(c.shape!)?.name ?? '?'} 보라 카드를 못 봄`)
+        }
+        return h
+      }
+      this.keys[`swapIgnored${i}`] = ''
+      this.swapModeAt = 0
       changed = swapped = true
       const next = identify(c.shape!)
       swapWhat = `${i + 1}번 ${h.piece?.name ?? '?'}→${next?.name ?? '?'} `
@@ -409,6 +436,9 @@ class Engine {
       this.requestSolve('바꿔 뽑기를 써서')
     }
   }
+
+  /** 바꿔 뽑기 고르는 화면(보라 카드)을 마지막으로 본 때. 이걸 본 뒤에만 카드가 바뀐 걸 바꿔 뽑기로 센다 */
+  private swapModeAt = 0
 
   /** 마지막 프레임에서 못 읽은 칸 (아이콘·커서 밑) */
   private lastUnsure: Board = new Array(ROWS).fill(0)
@@ -445,6 +475,7 @@ class Engine {
 
   private newSet(cards: CardRead[]) {
     this.hand = cards.map((c) => ({ state: 'piece', selected: c.selected, shape: c.shape, piece: c.shape ? identify(c.shape) : null }))
+    this.swapModeAt = 0
     // 실시간으로 새 세트를 볼 때만 센다 (스크린샷이나 중간부터 맞춘 세트는 빼서 같은 세트를 두 번 세지 않는다)
     if (this.live) this.recordSet()
     this.updatedAt = Date.now()
@@ -573,7 +604,8 @@ class Engine {
 
   /** 아이콘은 반짝여서 프레임마다 보였다 안 보였다 한다. 두 번 보이면 있고, 한참 안 보여야 없다 */
   /** fresh: 판이 바뀌는 도중(기억한 판과 화면이 다를 때) 처음 나타난 아이콘 */
-  private iconTrack = new Map<number, { kind: Icon['kind']; seen: number; miss: number; fresh: boolean }>()
+  /** under: 아이콘 밑이 블록(+)인지 빈칸(-)인지 프레임마다 쌓은 점수. 기억이 틀렸을 때 바로잡는 데 쓴다 */
+  private iconTrack = new Map<number, { kind: Icon['kind']; seen: number; miss: number; fresh: boolean; under: number }>()
 
   private iconNeed = 2
   /**
@@ -591,15 +623,24 @@ class Engine {
       if (isIconState(st)) {
         const kind: Icon['kind'] = st.startsWith('icon-dot') ? 'dot' : 'swap'
         if (!t) {
-          // 아이콘은 조각을 놓은 직후에만 새로 생긴다(공지). 그 밖에 갑자기 보이는 '아이콘'은
-          // 커서 등을 잘못 본 것이라 받지 않는다. 처음 맞출 때 이미 판에 있던 아이콘은 받는다
-          const justPlaced = Date.now() - this.lastPlacedAt < 3000 || changing || this.spawnPending
-          if (this.updatedAt && !justPlaced) {
+          // 아이콘은 7번째 배치 직후에만, 빈칸에만 새로 생긴다(공지). 그 밖에 갑자기 보이는 '아이콘'은
+          // 커서(흰 손) 등을 잘못 본 것이라 받지 않는다. 처음 맞출 때 이미 판에 있던 아이콘은 받는다.
+          // 카운트를 알면 차례(spawnPending)일 때만 받는다. 전에는 '아무 배치 뒤 3초 안'이면 받아서
+          // 놓은 직후 커서를 아이콘으로 자꾸 오인했다. 카운트를 모를 때(?)만 예전처럼 넓게 받는다
+          const countKnown = this.nextAbility !== null && !this.nextUnsure
+          const due = countKnown ? this.spawnPending : Date.now() - this.lastPlacedAt < 3000 || changing || this.spawnPending
+          const why = !due ? (countKnown ? '아이콘 차례가 아님' : '놓은 직후가 아님')
+            // 빈칸 조건은 카운트를 알 때만 본다. 다시 맞춘 직후엔 못 따라간 사이 밑에 블록이 채워진 아이콘도 있다
+            : countKnown && (st.endsWith('-on') || (this.board[r] >> c) & 1) ? '빈칸이 아님' : ''
+          // 7번째 배치 직후에는 판 변화를 확정(applyMove)하기 전 프레임에 아이콘이 먼저 보인다. 차례는 확정 뒤에
+          // 켜지므로 그 사이는 조용히 넘기고 다음 프레임에 받는다 (기록이 '무시'로 어지럽지 않게)
+          if (this.updatedAt && why && countKnown && changing) return
+          if (this.updatedAt && why) {
             // 진짜 아이콘을 못 받으면 그 줄을 지워도 획득을 못 센다. 원인을 찾을 수 있게 칸마다 한 번 남긴다
-            if (!this.ignoredIcons.has(i)) { this.ignoredIcons.add(i); this.log('아이콘 무시', `↓${r + 1} →${c + 1} 놓은 직후가 아님`) }
+            if (!this.ignoredIcons.has(i)) { this.ignoredIcons.add(i); this.log('아이콘 무시', `↓${r + 1} →${c + 1} ${why}`) }
             return
           }
-          this.iconTrack.set(i, { kind, seen: 1, miss: 0, fresh: changing })
+          this.iconTrack.set(i, { kind, seen: 1, miss: 0, fresh: changing, under: 0 })
           if (need === 1) { changed = true; this.onNewIcon() }
           return
         }
@@ -607,11 +648,16 @@ class Engine {
         if (t.seen < need && ++t.seen === need) {
           changed = true
           this.log('새 아이콘', `↓${r + 1} →${c + 1} ${kind === 'dot' ? '점 찍기' : '바꿔 뽑기'}`)
+          // 한 번에 하나만 생긴다. 같이 후보로 잡혔던 다른 칸(커서 등)은 버린다
+          if (this.updatedAt) for (const [j, o] of this.iconTrack) if (j !== i && o.seen < need) this.iconTrack.delete(j)
           this.onNewIcon()
         }
         if (t.kind !== kind) { t.kind = kind; changed = true }
+        if (t.seen >= need) this.checkUnder(t, i, st.endsWith('-on') ? 1 : -1)
       } else if (t) {
         if (t.seen < need) { this.iconTrack.delete(i); return } // 한 번 보이고 만 것은 잘못 본 것
+        if (st === 'empty') this.checkUnder(t, i, -1)
+        else if (st === 'block') this.checkUnder(t, i, 1)
         if (st === 'empty' && !((B[r] >> c) & 1) && ++t.miss > 35) {
           this.iconTrack.delete(i)
           changed = true
@@ -629,6 +675,27 @@ class Engine {
       changed = true
     }
     if (changed) this.publishIcons()
+  }
+
+  /**
+   * 아이콘 칸은 반짝여서 늘 '모름'으로 두고 기억한 값을 쓴다. 그래서 한 번 잘못 기억하면(빈칸인데 블록 등)
+   * 영영 안 고쳐졌다. 아이콘이 있는 동안 밑이 어떻게 읽히는지 쌓아 두고, 한쪽으로 확실히(약 3초) 기울면 기억을 고친다.
+   * 반짝임 때문에 한두 프레임 반대로 읽히는 건 점수가 상쇄돼서 고치지 않는다
+   */
+  private checkUnder(t: { under: number }, i: number, vote: number) {
+    if (!this.updatedAt) return
+    t.under = Math.max(-30, Math.min(30, t.under + vote))
+    if (Math.abs(t.under) < 20) return
+    const r = Math.floor(i / COLS), c = i % COLS
+    const mem = (this.board[r] >> c) & 1
+    const seen = t.under > 0 ? 1 : 0
+    t.under = 0
+    if (mem === seen) return
+    const B = this.board.slice()
+    B[r] ^= 1 << c
+    this.board = B
+    this.log('아이콘 칸 바로잡음', `↓${r + 1} →${c + 1} ${seen ? '빈칸 → 블록' : '블록 → 빈칸'}`)
+    this.requestSolve('아이콘 칸 기억을 바로잡아서')
   }
 
   /** 마지막으로 조각을 놓은 때. 새 아이콘은 놓은 직후에만 생긴다 */
