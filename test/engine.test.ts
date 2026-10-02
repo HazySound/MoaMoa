@@ -332,6 +332,70 @@ describe('커서를 아이콘으로 오인 (카운트를 알 때)', () => {
   })
 })
 
+describe('추천 자리를 찾느라 마우스를 판 위에 대고 있을 때 (기록 23:45:53~)', () => {
+  const setup = async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { parseBoard } = await import('../src/lib/core/board')
+    const by = (n: string) => PIECES.find((p) => p.name === n)!
+    engine.reset()
+    engine.board = parseBoard('###.......')
+    engine.updatedAt = Date.now()
+    engine.nextAbility = 5
+    engine.nextUnsure = false
+    engine.spawnPending = false
+    engine.swaps = 2
+    engine.dots = 3
+    engine.plans = []
+    engine.events = []
+    engine.hand = [
+      { state: 'used', selected: false, shape: null, piece: null },
+      { state: 'piece', selected: true, shape: by('점').shape, piece: by('점') },
+      { state: 'piece', selected: false, shape: by('ㅅ').shape, piece: by('ㅅ') },
+    ]
+    const cards = [
+      { state: 'used', selected: false, shape: null },
+      { state: 'piece', selected: true, shape: by('점').shape },
+      { state: 'piece', selected: false, shape: by('ㅅ').shape },
+    ]
+    // 커서 때문에 빈칸 하나(↓8 →5)가 채워진 것처럼 읽힌다
+    const B = parseBoard('###.......').slice()
+    B[7] |= 1 << 4
+    return { cards, B, before: engine.board.slice() }
+  }
+  const none = new Array(16).fill(0)
+
+  test('한 칸 오독을 1칸 조각을 놓은 걸로 보지 않는다 (카드가 그대로 보이면 안 놓은 것)', async () => {
+    const { cards, B, before } = await setup()
+    for (let i = 0; i < 5; i++) engine.track(B, none, cards, true)
+    expect(engine.board).toEqual(before)
+    expect(engine.hand[1].state).toBe('piece')
+    expect(engine.nextAbility).toBe(5)
+    expect(engine.events.some((e: any) => e.what === '배치 무시')).toBe(true)
+  })
+
+  test('카드가 그대로면 1.5초로는 다시 맞추지 않고, 아주 오래 그대로여도 능력 카운트는 모름으로 만들지 않는다', async () => {
+    const { cards, B, before } = await setup()
+    for (let i = 0; i < 20; i++) engine.track(B, none, cards, true)
+    expect(engine.board).toEqual(before) // 1.5초(10프레임)를 넘겨도 그대로
+    for (let i = 0; i < 50; i++) engine.track(B, none, cards, true)
+    await flush()
+    expect(engine.board).toEqual(B) // 8초쯤 지나면 화면을 믿는다
+    expect(engine.nextUnsure).toBe(false)
+    expect(engine.abilityUnsure).toBe(false)
+    expect(engine.nextAbility).toBe(5)
+    expect(engine.spawnPending).toBe(false)
+  })
+
+  test('진짜로 놓았으면(카드가 사용 완료) 바로 따라간다', async () => {
+    const { cards, B } = await setup()
+    const usedNow = [cards[0], { state: 'used', selected: false, shape: null }, cards[2]]
+    for (let i = 0; i < 2; i++) engine.track(B, none, usedNow, true)
+    expect(engine.board).toEqual(B)
+    expect(engine.hand[1].state).toBe('used')
+    expect(engine.nextAbility).toBe(4)
+  })
+})
+
 describe('원래 판에 있던 아이콘 (새로고침·화면 공유 다시 시작 뒤)', () => {
   test('카운트를 알아도, 다른 칸에 놓는 동안 그대로 있는 아이콘은 받는다 (실제 캡처: 템블록오류)', async () => {
     const { readBoard } = await import('../src/lib/vision/read')

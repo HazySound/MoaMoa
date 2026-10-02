@@ -309,19 +309,35 @@ class Engine {
       return
     }
 
+    this.track(B, unsure, cards, live)
+  }
+
+  /** 읽은 판·카드를 기억과 맞춰 본다: 배치로 설명되면 따라가고, 판이 그대로면 카드 변화를 본다 */
+  private track(B: Board, unsure: Board, cards: CardRead[], live: boolean) {
+    const need = live ? 2 : 1
+    const cardsReadable = cards.every((c) => c.state !== 'unknown')
     const key = boardKey(B)
     if (key !== boardKey(this.board)) {
       if (!this.steady('board', key, need)) return
       const remaining = this.hand.flatMap((h, slot) => (h.state === 'piece' && h.shape ? [{ slot, shape: h.shape }] : []))
       // 점 찍기는 갖고 있을 때만 후보로 둔다. 아니면 한 칸짜리 잘못 읽음을 점 찍기로 오해한다
-      const mv = explainMove(this.board, B, remaining, this.dots > 0, unsure)
+      let mv = explainMove(this.board, B, remaining, this.dots > 0, unsure)
+      // 조각을 진짜 놓으면 그 카드는 '사용 완료'(또는 새 세트)로 바뀐다. 카드가 아직 같은 조각으로 보이면 놓은 게 아니라
+      // 커서·미리보기를 잘못 읽은 것이다. 특히 1칸 조각을 들고 있으면 한 칸 오독이 전부 '놓음'으로 설명돼 버렸다
+      if (mv && mv.slot >= 0 && this.cardStillHeld(cards, mv.slot)) {
+        if (this.keys.heldReject !== key) { this.keys.heldReject = key; this.log('배치 무시', `${mv.slot + 1}번 카드가 그대로 보임 (화면 오독)`) }
+        mv = null
+      }
       if (mv) { this.applyMove(mv, mv.board); return }
+      // 카드가 하나도 안 바뀌었으면 아무것도 놓지 않았다. 판이 달라 보이는 건 마우스를 대고 있어서 생긴 오독이라
+      // 오래(약 8초) 그대로일 때만 화면을 믿고, 그때도 놓친 배치가 없으니 능력 카운트는 '모름'으로 만들지 않는다
+      const nothingPlaced = this.hand.every((h, i) => (h.state === 'used' ? cards[i].state === 'used' : this.cardStillHeld(cards, i)))
       // 어떤 배치로도 설명이 안 되는 판이 1.5초 넘게 그대로면 화면을 믿는다
-      if (this.counts.board >= (live ? 10 : 1) && cardsReadable) {
+      if (this.counts.board >= (!live ? 1 : nothingPlaced ? 57 : 10) && cardsReadable) {
         let diff = 0
         for (let r = 0; r < ROWS; r++) diff += popcount((B[r] ^ this.board[r]) & ~unsure[r])
-        if (live) this.log('설명 안 되는 판', `기억과 ${diff}칸 다름`)
-        this.resync(B, cards)
+        if (live) this.log('설명 안 되는 판', `기억과 ${diff}칸 다름${nothingPlaced ? ' (카드 그대로)' : ''}`)
+        this.resync(B, cards, nothingPlaced)
       }
       return
     }
@@ -494,11 +510,17 @@ class Engine {
     saveCounts(this.pieceCounts)
   }
 
-  /** 화면에 보이는 대로 처음부터 다시 맞춘다 */
-  private resync(B: Board, cards: CardRead[]) {
+  /** 기억한 카드 자리에 같은 조각이 그대로 보이는지 (못 읽는 카드는 '모름'이라 아니라고 본다) */
+  private cardStillHeld(cards: CardRead[], slot: number) {
+    const h = this.hand[slot], c = cards[slot]
+    return h?.state === 'piece' && !!h.shape && c?.state === 'piece' && !!c.shape && canonicalKey(c.shape) === canonicalKey(h.shape)
+  }
+
+  /** 화면에 보이는 대로 처음부터 다시 맞춘다. keepCounts: 놓친 배치가 없다고 확신할 때 (카드가 그대로) */
+  private resync(B: Board, cards: CardRead[], keepCounts = false) {
     // 판이 텅 비고 카드 세 장이 다 새것이면 새 게임이다. 줄 수(=단계)와 능력을 처음부터 센다
     const fresh = B.every((row) => row === 0) && cards.every((c) => c.state === 'piece')
-    if (!fresh && this.updatedAt) {
+    if (!fresh && this.updatedAt && !keepCounts) {
       // 그 사이 놓은 조각·지운 아이콘 줄을 못 셌을 수 있다. 다음 새 아이콘은 언제 보이든 받아서 카운트를 맞춘다
       this.abilityUnsure = true
       this.nextUnsure = true
@@ -710,7 +732,9 @@ class Engine {
     const mem = (this.board[r] >> c) & 1
     const seen = t.under > 0 ? 1 : 0
     t.under = 0
-    if (mem === seen) return
+    // 블록 → 빈칸만 고친다. 블록은 조각을 놓아야만 생기고 그건 배치로 따라가므로, '빈칸 → 블록'으로 고칠 일은
+    // 잘못 받은 아이콘(커서) 밑을 오독한 경우뿐이었다 (기록: ↓1 →5 빈칸→블록→빈칸 오락가락)
+    if (mem === seen || seen === 1) return
     const B = this.board.slice()
     B[r] ^= 1 << c
     this.board = B
