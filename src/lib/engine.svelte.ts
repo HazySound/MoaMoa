@@ -253,9 +253,12 @@ class Engine {
     const unsure = new Array<number>(ROWS).fill(0)
     br.cells.forEach((st, i) => {
       const r = Math.floor(i / COLS), c = i % COLS
-      if (st === 'cursor' || st === 'unknown') {
+      // 아이콘 칸도 '모름'이다. 아이콘이 반짝이면 밑이 블록인지 빈칸인지 프레임마다 다르게 읽힌다.
+      // 그 칸이 바뀌는 건 조각을 놓거나 줄이 지워질 때뿐이고, 그때는 다른 칸도 함께 바뀌어서 그걸로 안다
+      if (st === 'cursor' || st === 'unknown' || isIconState(st)) {
         unsure[r] |= 1 << c
-        if ((this.board[r] >> c) & 1) B[r] |= 1 << c
+        const known = this.updatedAt ? (this.board[r] >> c) & 1 : isFilledState(st) ? 1 : 0
+        if (known) B[r] |= 1 << c
       } else if (isFilledState(st)) B[r] |= 1 << c
     })
     this.trackIcons(br.cells, B, live ? 2 : 1)
@@ -271,7 +274,8 @@ class Engine {
     if (key !== boardKey(this.board)) {
       if (!this.steady('board', key, need)) return
       const remaining = this.hand.flatMap((h, slot) => (h.state === 'piece' && h.shape ? [{ slot, shape: h.shape }] : []))
-      const mv = explainMove(this.board, B, remaining, true, unsure)
+      // 점 찍기는 갖고 있을 때만 후보로 둔다. 아니면 한 칸짜리 잘못 읽음을 점 찍기로 오해한다
+      const mv = explainMove(this.board, B, remaining, this.dots > 0, unsure)
       if (mv) { this.applyMove(mv, mv.board); return }
       // 어떤 배치로도 설명이 안 되는 판이 1.5초 넘게 그대로면 화면을 믿는다
       if (this.counts.board >= (live ? 10 : 1) && cardsReadable) {
@@ -463,11 +467,36 @@ class Engine {
     this.requestSolve('직접 다시 계산')
   }
 
+  /**
+   * 최근 계산 결과. 같은 상황을 다시 계산하지 않는다. 인식이 잠깐 흔들려 상태가 오갈 때
+   * 계산이 되풀이되며 추천이 깜빡이는 것을 막는 안전장치이기도 하다.
+   */
+  private solveCache = new Map<string, { plans: Plan[]; rescue: Rescue | null }>()
+  private pendingKey = ''
+
+  private situationKey(hand: (Shape | null)[]) {
+    return [boardKey(this.board), this.icons.map((i) => `${i.r},${i.c}${i.kind[0]}`).join(';'), hand.map((h) => h?.key ?? '-').join('/'),
+      this.style, this.thinkMs, this.swaps, this.dots, this.stage].join('|')
+  }
+
   private requestSolve(reason: string) {
-    this.solveReason = reason
-    this.log('계산', reason)
     const hand = this.hand.map((h) => (h.state === 'piece' ? h.shape : null))
     if (!hand.some(Boolean)) { this.plans = []; this.stepIdx = 0; return }
+    const key = this.situationKey(hand)
+    const hit = this.solveCache.get(key)
+    if (hit && reason !== '직접 다시 계산') {
+      if (this.solving && this.worker) { this.worker.terminate(); this.worker = null }
+      this.solving = false
+      this.plans = hit.plans
+      this.rescue = hit.rescue
+      this.planIdx = 0
+      this.stepIdx = 0
+      this.log('저장된 계산 사용', reason)
+      return
+    }
+    this.solveReason = reason
+    this.log('계산', reason)
+    this.pendingKey = key
     // 이전 계산이 아직 돌고 있으면 버린다. 기다리면 새 계산이 그만큼 늦게 끝난다
     if (this.solving && this.worker) { this.worker.terminate(); this.worker = null }
     this.worker ??= this.makeWorker()
@@ -494,6 +523,8 @@ class Engine {
       this.progress = 1
       this.plans = d.plans
       this.rescue = d.rescue
+      this.solveCache.set(this.pendingKey, { plans: d.plans, rescue: d.rescue })
+      if (this.solveCache.size > 40) this.solveCache.delete(this.solveCache.keys().next().value!)
       this.planIdx = 0
       this.stepIdx = 0
       this.solving = false

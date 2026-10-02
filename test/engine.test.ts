@@ -117,3 +117,34 @@ describe('같은 조각 두 장', () => {
     expect(engine.plan.steps.slice(1).some((s: any) => s.slot === st.slot)).toBe(true) // 남은 ㄱ 단계는 아직 안 쓴 카드로
   })
 })
+
+describe('아이콘 반짝임', () => {
+  test('블록 위 아이콘이 빈칸처럼 읽혔다 말았다 해도 점 찍기로 오해하거나 다시 맞추지 않는다', async () => {
+    const { readCell } = await import('../src/lib/vision/read')
+    const a = frame('icon-over2.png')
+    // 같은 화면에서 (10,8) 칸 가장자리만 청록으로 칠해 '빈칸 위 아이콘'처럼 보이게 만든다
+    const img = a.frame.image
+    const b = { width: img.width, height: img.height, data: Uint8Array.from(img.data) }
+    const g = a.grid, p = g.pitch, x0 = g.x + 8 * p, y0 = g.y + 10 * p
+    for (let y = Math.floor(y0); y < y0 + p; y++) for (let x = Math.floor(x0); x < x0 + p; x++) {
+      const fx = (x - x0) / p, fy = (y - y0) / p
+      if (fx > 0.2 && fx < 0.8 && fy > 0.2 && fy < 0.8) continue
+      const i = (y * img.width + x) * 4
+      b.data[i] = 85; b.data[i + 1] = 185; b.data[i + 2] = 210
+    }
+    expect(readCell(img as any, g, 10, 8)).toBe('icon-dot-on')
+    expect(readCell(b as any, g, 10, 8)).toBe('icon-dot')
+
+    engine.reset()
+    engine.dots = 1
+    for (let i = 0; i < 2; i++) engine.ingest(a.frame, g, true)
+    await flush()
+    const board = engine.board.slice()
+    const events = engine.events.length
+    for (let i = 0; i < 30; i++) engine.ingest(i % 3 ? a.frame : { image: b, ox: 0, oy: 0 }, g, true)
+    await flush()
+    expect(engine.board).toEqual(board)
+    expect(engine.dots).toBe(1)
+    expect(engine.events.slice(0, engine.events.length - events).filter((e: any) => e.what === '계산')).toEqual([])
+  })
+})
