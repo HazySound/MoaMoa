@@ -1,0 +1,31 @@
+# main에 푸시하면 테스트·타입 검사를 통과한 경우에만 Cloudflare에 배포한다.
+# 로컬에서 하던 `npm test` → `npm run check` → `npm run deploy`와 같은 순서다
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 연달아 푸시하면 앞의 배포는 취소하고 마지막 것만 올린다
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run check
+      - run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # 계정 ID는 비밀이 아니다. 토큰이 여러 계정에 걸려 있어도 이 계정으로 올리게 못박는다
+          CLOUDFLARE_ACCOUNT_ID: fd84fe8f68a903fb46cef478c536502e
