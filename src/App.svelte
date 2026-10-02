@@ -3,6 +3,7 @@
   import { cubicOut } from 'svelte/easing'
   import { Tween } from 'svelte/motion'
   import { engine } from './lib/engine.svelte'
+  import { pip } from './lib/pip.svelte'
   import Board from './lib/components/Board.svelte'
   import MiniShape from './lib/components/MiniShape.svelte'
   import SourcePreview from './lib/components/SourcePreview.svelte'
@@ -22,6 +23,7 @@
   import IconAlert from '~icons/lucide/triangle-alert'
   import IconChevron from '~icons/lucide/chevron-down'
   import IconLock from '~icons/lucide/lock'
+  import IconPip from '~icons/lucide/picture-in-picture-2'
 
   const STEP_COLORS = ['var(--color-s1)', 'var(--color-s2)', 'var(--color-s3)']
   const PIECE_COLORS: Record<string, string> = { pink: '#f472b6', green: '#84cc16', blue: '#38bdf8', yellow: '#facc15' }
@@ -116,6 +118,11 @@
           <i></i>{statusText[engine.status]}
         </span>
       {/if}
+      {#if pip.supported}
+        <button class="btn ghost" class:on={pip.open} onclick={() => pip.toggle()} title="게임 위에 늘 떠 있는 작은 창">
+          <IconPip class="size-4" />{pip.open ? '작은 창 닫기' : '작은 창'}
+        </button>
+      {/if}
       {#if engine.live}
         <button class="btn ghost" onclick={() => engine.stopCapture()}><IconStop class="size-4" />공유 중지</button>
       {:else}
@@ -158,10 +165,11 @@
         {#each [
           ['게임에서 한글 모아모아를 열어요', '창 전체가 가려지지 않게 두세요.'],
           ['화면 공유에서 메이플스토리 창을 골라요', '‘창’ 탭에서 MapleStory를 선택하면 다른 창에 가려져도 읽을 수 있어요.'],
+          ['‘작은 창’을 띄워 게임 옆에 두세요', '늘 위에 떠 있는 작은 창에 판과 지금 할 일이 나와요. 게임을 보면서 바로 놓을 수 있어요.'],
           ['추천대로 놓아요', '번호 순서대로, 표시된 방향으로 돌린 뒤 커서 표시 칸에 클릭하면 돼요. 놓을 때마다 알아서 다음 단계로 넘어가요.'],
         ] as [t, d], i}
           <li class="flex gap-4 rounded-2xl p-4 transition-colors hover:bg-white/[0.03]" in:fly={{ y: 12, delay: 120 + i * 90, duration: 500, easing: cubicOut }}>
-            <span class="grid size-8 shrink-0 place-items-center rounded-full font-mono text-sm font-semibold text-ink-950" style="background:{STEP_COLORS[i]}">{i + 1}</span>
+            <span class="grid size-8 shrink-0 place-items-center rounded-full font-mono text-sm font-semibold text-ink-950" style="background:{STEP_COLORS[i % 3]}">{i + 1}</span>
             <div>
               <p class="font-semibold">{t}</p>
               <p class="mt-1 text-sm leading-relaxed text-ink-400">{d}</p>
@@ -431,6 +439,7 @@
   .btn.primary:hover { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.3) inset, 0 10px 30px -8px rgb(45 212 191 / 0.8); }
   .btn.ghost { color: var(--color-ink-200); background: rgb(255 255 255 / 0.05); border: 1px solid rgb(255 255 255 / 0.08); }
   .btn.ghost:hover { background: rgb(255 255 255 / 0.09); }
+  .btn.ghost.on { color: var(--color-s1); border-color: rgb(45 212 191 / 0.4); background: rgb(45 212 191 / 0.08); }
 
   .status {
     display: inline-flex;

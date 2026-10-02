@@ -17,6 +17,11 @@ export class ScreenSource {
   readonly video: HTMLVideoElement
   private canvas = document.createElement('canvas')
   private ctx = this.canvas.getContext('2d', { willReadFrequently: true })!
+  /**
+   * 탭이 뒤로 가면 브라우저가 video 요소의 재생을 멈추거나 늦출 수 있다. 게임을 보면서 PiP 창으로
+   * 쓰는 동안이 딱 그 상황이라, 되면 ImageCapture로 트랙에서 바로 프레임을 받는다.
+   */
+  private imageCapture: ImageCapture | null = null
   onEnded: (() => void) | null = null
 
   private constructor(readonly stream: MediaStream) {
@@ -24,7 +29,9 @@ export class ScreenSource {
     this.video.muted = true
     this.video.playsInline = true
     this.video.srcObject = stream
-    stream.getVideoTracks()[0]?.addEventListener('ended', () => this.onEnded?.())
+    const track = stream.getVideoTracks()[0]
+    track?.addEventListener('ended', () => this.onEnded?.())
+    if (track && typeof ImageCapture !== 'undefined') this.imageCapture = new ImageCapture(track)
   }
 
   static async start(): Promise<ScreenSource> {
@@ -37,20 +44,25 @@ export class ScreenSource {
     return src
   }
 
-  get width() { return this.video.videoWidth }
-  get height() { return this.video.videoHeight }
+  private size(): [number, number] {
+    const st = this.stream.getVideoTracks()[0]?.getSettings()
+    return [st?.width || this.video.videoWidth, st?.height || this.video.videoHeight]
+  }
 
-  grab(region?: { x: number; y: number; w: number; h: number }): Frame | null {
-    const W = this.width, H = this.height
-    if (!W || !H) return null
-    const r = region
-      ? clampRect(region, W, H)
-      : { x: 0, y: 0, w: W, h: H }
+  async grab(region?: { x: number; y: number; w: number; h: number }): Promise<Frame | null> {
+    let bmp: ImageBitmap | null = null
+    if (this.imageCapture) {
+      try { bmp = await this.imageCapture.grabFrame() } catch { bmp = null }
+    }
+    const [W, H] = bmp ? [bmp.width, bmp.height] : this.size()
+    if (!W || !H) { bmp?.close(); return null }
+    const r = region ? clampRect(region, W, H) : { x: 0, y: 0, w: W, h: H }
     if (this.canvas.width !== r.w || this.canvas.height !== r.h) {
       this.canvas.width = r.w
       this.canvas.height = r.h
     }
-    this.ctx.drawImage(this.video, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h)
+    this.ctx.drawImage(bmp ?? this.video, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h)
+    bmp?.close()
     return { image: this.ctx.getImageData(0, 0, r.w, r.h), ox: r.x, oy: r.y }
   }
 

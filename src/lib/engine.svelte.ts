@@ -36,6 +36,7 @@ function loadPrefs(): Prefs {
 
 class Engine {
   status = $state<Status>('idle')
+  capturing = $state(false)
   error = $state<string | null>(null)
   grid = $state<Grid | null>(null)
 
@@ -88,7 +89,7 @@ class Engine {
 
   get plan(): Plan | null { return this.plans[this.planIdx] ?? null }
   get stage() { return stageOf(this.lines) }
-  get live() { return this.source !== null }
+  get live() { return this.capturing }
 
   // ─── 입력 ────────────────────────────────────────────────────────────
 
@@ -102,15 +103,18 @@ class Engine {
       return
     }
     this.source.onEnded = () => this.stopCapture()
+    this.capturing = true
     this.grid = null
     this.status = 'searching'
     this.loop()
   }
 
   stopCapture() {
+    this.timerHost.clearTimeout(this.timer)
     clearTimeout(this.timer)
     this.source?.stop()
     this.source = null
+    this.capturing = false
     this.status = this.updatedAt ? 'image' : 'idle'
   }
 
@@ -127,28 +131,42 @@ class Engine {
     if (!this.live) this.status = 'image'
   }
 
-  private loop = () => {
+  /**
+   * 타이머는 PiP 창이 열려 있으면 그 창의 것을 쓴다. 게임을 보는 동안 원래 탭은 뒤에 있어서
+   * 브라우저가 타이머를 1초에 한 번으로 늦추지만, 늘 보이는 PiP 창은 그러지 않는다.
+   */
+  timerHost: Window = window
+
+  /** PiP 창이 열리고 닫힐 때 타이머를 옮겨 단다. 닫힌 창에 걸어 둔 타이머는 영영 안 울린다 */
+  setTimerHost(win: Window) {
+    this.timerHost.clearTimeout(this.timer)
+    this.timerHost = win
+    if (this.source) this.timer = win.setTimeout(this.loop, 0)
+  }
+
+  private loop = async () => {
     const t0 = performance.now()
-    this.tick()
+    try { await this.tick() } catch (e) { console.error(e) }
+    if (!this.source) return
     const spent = performance.now() - t0
     this.fps = Math.round(1000 / Math.max(spent, 200))
     // 시간 제한이 없는 게임이라 초당 4~5번이면 충분하다
-    this.timer = window.setTimeout(this.loop, Math.max(60, 220 - spent))
+    this.timer = this.timerHost.setTimeout(this.loop, Math.max(60, 220 - spent))
   }
 
-  private tick() {
+  private async tick() {
     const src = this.source
     if (!src) return
     if (!this.grid) {
-      const full = src.grab()
+      const full = await src.grab()
       if (!full) return
       const g = detectGrid(full.image)
       if (!g) { this.status = 'searching'; this.lastFrame = full; return }
       this.grid = { x: g.x + full.ox, y: g.y + full.oy, pitch: g.pitch }
     }
     const g = this.grid
-    const frame = src.grab(regionOf(g))
-    if (!frame) return
+    const frame = await src.grab(regionOf(g))
+    if (!frame || !this.source) return
     this.lastFrame = frame
     const local: Grid = { x: g.x - frame.ox, y: g.y - frame.oy, pitch: g.pitch }
     this.ingest(frame, local, 2)
