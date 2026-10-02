@@ -526,7 +526,7 @@ function hashBoard(b: Board): number {
  */
 export type Rescue =
   | { kind: 'dot'; r: number; c: number; plan: Plan; proactive?: boolean; gain?: number }
-  | { kind: 'swap'; slot: number; proactive?: boolean; gain?: number }
+  | { kind: 'swap'; slot: number; proactive?: boolean; gain?: number; room?: boolean }
 
 const DOT_SHAPE: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 
@@ -572,29 +572,48 @@ export function rescue(inp: SolveInput, base: Plan | undefined): Rescue | null {
  * 능력은 합쳐 7개까지라 꽉 차 있으면 새로 못 얻는다. 한도가 가까우면 기준을 낮춰 아끼지 않고 쓴다.
  */
 /**
- * 능력 미리 쓰기 기준. 가상 플레이 30판씩 비교로 골랐다 (2026-10-02):
- *   막혔을 때만 쓰기            53.4세트 · 32,300점
- *   이 기준                      58.5세트 · 36,500점
- *   느슨하게(점 250, 위험 0.25) 49.3세트 · 29,700점  ← 일찍 써 버려 정작 막힐 때 없다
- * 점 찍기는 효과가 아주 클 때만(대개 어떤 조각으로도 못 메우는 칸), 바꿔 뽑기는 막혔을 때만 쓰고,
- * 7개가 꽉 차면(새 능력을 못 받으니) 조금이라도 나으면 쓴다.
+ * 능력 쓰기 규칙. 가상 플레이 30판씩 비교로 골랐다 (2026-10-02, 평균 생존 세트 · 점수):
+ *   막혔을 때만 쓰기                                   53.4 · 32,300
+ *   꽉 찼고 아이콘을 놓칠 때만 털기 (collect)            53.2 · 32,300
+ *   꽉 차면 이득이 될 때 바로, 바꿔 뽑기부터             57.4 · 35,600
+ *   꽉 차면 이득이 될 때 바로, 점 찍기부터 (지금 기준)   58.5 · 36,500
+ *
+ *  - 바꿔 뽑기가 더 값지다. 어떤 조각이 막혀도 새로 뽑아 살릴 수 있지만 점 찍기는 한 칸만 메운다.
+ *    그래서 바꿔 뽑기는 막혔을 때만 쓰고 아껴 둔다
+ *  - 점 찍기는 막혔을 때, 또는 이득이 아주 클 때(대개 어떤 조각으로도 못 메우는 구멍이 있는 줄을 지울 때)
+ *  - 7개로 꽉 차면 새 아이콘을 못 챙기니, 이득이 되는 순간 점 찍기부터 털어 자리를 둔다
  */
-export const ADV = { dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 7, keep: 0 }
+export const ADV = { dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 7, keep: 0, capMode: 'any' as 'collect' | 'any', swapFirst: false }
+
+/** 계획대로 두면 꽉 차서 못 챙기는 아이콘들 */
+function missedIcons(inp: SolveInput, plan: Plan): Icon['kind'][] {
+  if (inp.heldAbilities < ABILITY_CAP) return []
+  const out: Icon['kind'][] = []
+  let icons = inp.icons
+  for (const st of plan.steps) {
+    for (const ic of icons) if (st.cleared.includes(ic.r)) out.push(ic.kind)
+    icons = st.iconsAfter
+  }
+  return out
+}
 
 export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue | null {
   const stuck = rescue(inp, base)
   if (stuck || !base) return stuck
   const swaps = inp.swaps ?? 0, dots = inp.dots ?? 0
-  const nearCap = inp.heldAbilities >= ADV.cap
-  // 위기용으로 남겨 둘 개수. 한도가 가까우면 남기지 않는다
-  if (!nearCap && inp.heldAbilities <= ADV.keep) return null
   const quick = (i: SolveInput) => searchPlans({ ...i, beam: 60, budgetMs: 0 }, 1)[0]
   const now = quick(inp)
   if (!now || now.incomplete) return null
 
+  const missed = ADV.capMode === 'collect' ? missedIcons(inp, base) : []
+  const nearCap = ADV.capMode === 'any' ? inp.heldAbilities >= ADV.cap : false
+  // 꽉 차서 못 챙기는 게 점 찍기면 바꿔 뽑기를 털어서라도 챙긴다. 바꿔 뽑기뿐이면 털어도 손해가 없을 때만
+  const makeRoom = missed.length > 0 && swaps > 0
+  const roomGain = missed.includes('dot') ? -Infinity : 0
+
   if (dots > 0) {
     const stuckMask = stuckRows(inp.board)
-    let best: Rescue | null = null, bestGain = nearCap ? 0 : ADV.dotGain
+    let best: Rescue | null = null, bestGain = nearCap && !(ADV.swapFirst && swaps > 0) ? 0 : ADV.dotGain
     for (let r = 0; r < ROWS; r++) {
       const row = inp.board[r]
       if (popcount(row) !== COLS - 1) continue
@@ -610,11 +629,13 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
     if (best) return best
   }
 
-  if (swaps > 0 && (base.risk >= ADV.swapRisk || nearCap)) {
+  if (swaps > 0 && (base.risk >= ADV.swapRisk || nearCap || makeRoom)) {
     const table = weightTable(inp.weights)
     const rand = rng(hashBoard(inp.board) ^ 0x51ed27)
     const SAMPLES = 5
-    let best: Rescue | null = null, bestGain = nearCap ? 0 : ADV.swapGain
+    let best: Rescue | null = null
+    let bestGain = makeRoom ? roomGain : nearCap ? 0 : ADV.swapGain
+    // 바꿀 카드는 바꾼 뒤 평균이 가장 좋은(손실이 가장 적은) 카드
     inp.hand.forEach((h, slot) => {
       if (!h) return
       let sum = 0
@@ -626,7 +647,7 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
         sum += !plan || plan.incomplete ? now.value - 20000 : plan.value
       }
       const gain = sum / SAMPLES - now.value
-      if (gain > bestGain) { bestGain = gain; best = { kind: 'swap', slot, proactive: true, gain: Math.round(gain) } }
+      if (gain > bestGain) { bestGain = gain; best = { kind: 'swap', slot, proactive: true, gain: Math.round(gain), room: makeRoom } }
     })
     if (best) return best
   }
