@@ -148,3 +148,49 @@ describe('아이콘 반짝임', () => {
     expect(engine.events.slice(0, engine.events.length - events).filter((e: any) => e.what === '계산')).toEqual([])
   })
 })
+
+describe('안 보이는 칸에 놓기', () => {
+  const setup = async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { parseBoard, place } = await import('../src/lib/core/board')
+    const dot = PIECES.find((p) => p.name === '점')!
+    engine.reset()
+    engine.board = parseBoard('.########.\n..........') // 아래에서 둘째 줄 9열이 아이콘 칸 (빈칸). 채워도 줄은 안 지워진다
+    engine.hand = [
+      { state: 'used', selected: false, shape: null, piece: null },
+      { state: 'used', selected: false, shape: null, piece: null },
+      { state: 'piece', selected: false, shape: dot.shape, piece: dot },
+    ]
+    engine.updatedAt = Date.now()
+    const after = place(engine.board, dot.shape, 14, 9)
+    engine.plans = [{ steps: [{ slot: 2, shape: dot.shape, flip: false, rot: 0, r: 14, c: 9, cleared: after.cleared, gained: 0, abilities: 0, boardAfter: after.board, iconsAfter: [] }], gained: 0, value: 0, risk: 0, stuck: 0, incomplete: false, board: after.board, abilityValue: 0, samples: 0 }]
+    engine.planIdx = 0
+    engine.stepIdx = 0
+    engine.solving = false
+    const unsure = new Array(16).fill(0); unsure[14] = 1 << 9
+    engine.lastUnsure = unsure
+    return { PIECES, after }
+  }
+
+  test('1칸 조각을 아이콘 칸에 넣으면 판은 그대로라도 카드가 사용 완료가 된 걸로 안다', async () => {
+    const { after } = await setup()
+    const used = { state: 'used', selected: false, shape: null }
+    for (let i = 0; i < 2; i++) engine.watchCards([used, used, used], 2)
+    expect(engine.board).toEqual(after.board)
+    expect(engine.hand[2].state).toBe('used')
+    expect(engine.stepIdx).toBe(1)
+  })
+
+  test('그 사이 새 세트가 떠도 바꿔 뽑기로 오해하지 않고, 남은 조각을 놓은 걸로 본 뒤 새 세트를 시작한다', async () => {
+    const { PIECES, after } = await setup()
+    engine.swaps = 2
+    const card = (name: string) => ({ state: 'piece', selected: false, shape: PIECES.find((p) => p.name === name)!.shape })
+    const next = [card('ㅇ'), card('ㄱ'), card('ㅊ')]
+    for (let i = 0; i < 2; i++) engine.watchCards(next, 2)
+    await flush()
+    expect(engine.board).toEqual(after.board)
+    expect(engine.swaps).toBe(2)
+    expect(engine.hand.map((h: any) => h.piece?.name)).toEqual(['ㅇ', 'ㄱ', 'ㅊ'])
+    expect(engine.hand.every((h: any) => h.state === 'piece')).toBe(true)
+  })
+})

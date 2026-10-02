@@ -8,7 +8,7 @@
  *  - 세 조각을 다 놓으면 새 카드 3장을 기다린다
  * 점 찍기(1칸)와 바꿔 뽑기(카드가 다른 조각으로 바뀜)도 알아채서 그때만 다시 계산한다.
  */
-import { ABILITY_SCORE, popcount, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
+import { ABILITY_SCORE, canPlace, place, popcount, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
 import { explainMove, type Move } from './core/track'
 import { identify, stageOf, type PieceDef } from './core/pieces'
 import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
@@ -262,6 +262,7 @@ class Engine {
       } else if (isFilledState(st)) B[r] |= 1 << c
     })
     this.trackIcons(br.cells, B, live ? 2 : 1)
+    this.lastUnsure = unsure
 
     const need = live ? 2 : 1
     const cardsReadable = cards.every((c) => c.state !== 'unknown')
@@ -307,6 +308,24 @@ class Engine {
       if (cards.every(ok) && this.steady('set', cardSig(cards), need)) this.newSet(cards)
       return
     }
+
+    // 판은 그대로인데 게임 카드가 '사용 완료'가 됐다 → 판에서 안 보이는 칸(아이콘·커서 밑)에 놓았다.
+    // 대표적으로 1칸 조각을 아이콘 칸에 넣은 경우다
+    for (let i = 0; i < 3; i++) {
+      if (this.hand[i].state === 'piece' && cards[i].state === 'used' && this.steady(`gone${i}`, 'used', need)) {
+        if (!this.placeHidden([i])) this.log('안 보이는 배치를 못 찾음', `${i + 1}번 카드`)
+        return
+      }
+    }
+    // 이미 놓은 카드 자리에 새 조각이 떴다 → 새 세트다. 남은 조각도 모두 놓였다는 뜻이다
+    // (바꿔 뽑기는 아직 안 놓은 카드만 바꾼다)
+    if (this.hand.some((h, i) => h.state === 'used' && ok(cards[i])) && cards.every(ok)) {
+      if (!this.steady('set', cardSig(cards), need)) return
+      const left = this.hand.flatMap((h, i) => (h.state === 'piece' ? [i] : []))
+      if (left.length && !this.placeHidden(left)) this.log('안 보이는 배치를 못 찾음', left.map((i) => `${i + 1}번`).join(','))
+      this.newSet(cards)
+      return
+    }
     let changed = false, swapped = false
     const hand = this.hand.map((h, i) => {
       const c = cards[i]
@@ -329,6 +348,39 @@ class Engine {
       this.logGame((g) => g.swapsUsed++)
       this.requestSolve('바꿔 뽑기를 써서')
     }
+  }
+
+  /** 마지막 프레임에서 못 읽은 칸 (아이콘·커서 밑) */
+  private lastUnsure: Board = new Array(ROWS).fill(0)
+
+  /**
+   * 판에 드러나지 않게 놓인 조각들을 안 보이는 칸 안에서 찾아 채운다.
+   * 계획에 그 카드의 단계가 있고 자리가 맞으면 그 자리를 먼저 쓴다.
+   */
+  private placeHidden(slots: number[]): boolean {
+    for (const slot of slots) {
+      const h = this.hand[slot]
+      if (!h.shape) return false
+      const planned = this.plan?.steps.find((s) => s.slot === slot)
+      let mv: Move | null = null
+      if (planned && canPlace(this.board, planned.shape, planned.r, planned.c)) {
+        // 추천한 자리가 통째로 안 보이는 칸 안이면 그 자리다
+        let hidden = true
+        for (let i = 0; i < planned.shape.h; i++) {
+          const bits = planned.shape.rows[i] << planned.c
+          if ((bits & ~this.lastUnsure[planned.r + i]) !== 0) hidden = false
+        }
+        if (hidden) {
+          const res = place(this.board, planned.shape, planned.r, planned.c)
+          if (!res.cleared.length) mv = { slot, shape: planned.shape, r: planned.r, c: planned.c, cleared: [], board: res.board }
+        }
+      }
+      mv ??= explainMove(this.board, this.board, [{ slot, shape: h.shape }], false, this.lastUnsure)
+      if (!mv) return false
+      this.log('안 보이는 칸에 놓음', `${slot + 1}번 카드 ↓${mv.r + 1}행 →${mv.c + 1}열`)
+      this.applyMove(mv, mv.board)
+    }
+    return true
   }
 
   private newSet(cards: CardRead[]) {
