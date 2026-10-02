@@ -520,9 +520,13 @@ function hashBoard(b: Board): number {
 
 // ─── 막혔을 때: 능력 쓰기 ────────────────────────────────────────────────
 
+/**
+ * 능력 쓰기 추천. proactive가 false면 '안 쓰면 다 못 놓는다', true면 '써 두면 더 낫다'.
+ * gain은 쓴 쪽이 안 쓴 쪽보다 나은 정도(평가값, 대략 점수 단위).
+ */
 export type Rescue =
-  | { kind: 'dot'; r: number; c: number; plan: Plan }
-  | { kind: 'swap'; slot: number }
+  | { kind: 'dot'; r: number; c: number; plan: Plan; proactive?: boolean; gain?: number }
+  | { kind: 'swap'; slot: number; proactive?: boolean; gain?: number }
 
 const DOT_SHAPE: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 
@@ -559,6 +563,90 @@ export function rescue(inp: SolveInput, base: Plan | undefined): Rescue | null {
     if (slot >= 0) return { kind: 'swap', slot }
   }
   return null
+}
+
+/**
+ * 막히기 전에 능력을 써 두는 게 나은지 본다.
+ *  - 점 찍기: 한 칸만 빈 줄(특히 어떤 조각으로도 못 메우는 칸)을 찍어 지우면 판이 얼마나 나아지는지
+ *  - 바꿔 뽑기: 이번 세트가 위험할 때, 카드마다 다른 조각으로 바뀐 경우를 몇 번 뽑아 평균이 얼마나 나아지는지
+ * 능력은 합쳐 7개까지라 꽉 차 있으면 새로 못 얻는다. 한도가 가까우면 기준을 낮춰 아끼지 않고 쓴다.
+ */
+/**
+ * 능력 미리 쓰기 기준. 가상 플레이 30판씩 비교로 골랐다 (2026-10-02):
+ *   막혔을 때만 쓰기            53.4세트 · 32,300점
+ *   이 기준                      58.5세트 · 36,500점
+ *   느슨하게(점 250, 위험 0.25) 49.3세트 · 29,700점  ← 일찍 써 버려 정작 막힐 때 없다
+ * 점 찍기는 효과가 아주 클 때만(대개 어떤 조각으로도 못 메우는 칸), 바꿔 뽑기는 막혔을 때만 쓰고,
+ * 7개가 꽉 차면(새 능력을 못 받으니) 조금이라도 나으면 쓴다.
+ */
+export const ADV = { dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 7, keep: 0 }
+
+export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue | null {
+  const stuck = rescue(inp, base)
+  if (stuck || !base) return stuck
+  const swaps = inp.swaps ?? 0, dots = inp.dots ?? 0
+  const nearCap = inp.heldAbilities >= ADV.cap
+  // 위기용으로 남겨 둘 개수. 한도가 가까우면 남기지 않는다
+  if (!nearCap && inp.heldAbilities <= ADV.keep) return null
+  const quick = (i: SolveInput) => searchPlans({ ...i, beam: 60, budgetMs: 0 }, 1)[0]
+  const now = quick(inp)
+  if (!now || now.incomplete) return null
+
+  if (dots > 0) {
+    const stuckMask = stuckRows(inp.board)
+    let best: Rescue | null = null, bestGain = nearCap ? 0 : ADV.dotGain
+    for (let r = 0; r < ROWS; r++) {
+      const row = inp.board[r]
+      if (popcount(row) !== COLS - 1) continue
+      const c = Math.log2(~row & FULL_ROW) | 0
+      const res = place(inp.board, DOT_SHAPE, r, c, inp.icons, inp.heldAbilities)
+      const plan = quick({ ...inp, board: res.board, icons: res.icons, heldAbilities: inp.heldAbilities - 1 + res.abilities.length })
+      if (!plan || plan.incomplete) continue
+      // 어떤 조각으로도 못 메우는 칸이면 이 줄은 점 찍기 말고는 영영 못 지운다
+      const bonus = (stuckMask[r] >> c) & 1 ? 600 : 0
+      const gain = res.gained + plan.value - now.value + bonus
+      if (gain > bestGain) { bestGain = gain; best = { kind: 'dot', r, c, plan, proactive: true, gain: Math.round(gain) } }
+    }
+    if (best) return best
+  }
+
+  if (swaps > 0 && (base.risk >= ADV.swapRisk || nearCap)) {
+    const table = weightTable(inp.weights)
+    const rand = rng(hashBoard(inp.board) ^ 0x51ed27)
+    const SAMPLES = 5
+    let best: Rescue | null = null, bestGain = nearCap ? 0 : ADV.swapGain
+    inp.hand.forEach((h, slot) => {
+      if (!h) return
+      let sum = 0
+      for (let k = 0; k < SAMPLES; k++) {
+        const repl = pick(table, rand)[0]
+        const hand = inp.hand.slice()
+        hand[slot] = repl
+        const plan = quick({ ...inp, hand, heldAbilities: inp.heldAbilities - 1 })
+        sum += !plan || plan.incomplete ? now.value - 20000 : plan.value
+      }
+      const gain = sum / SAMPLES - now.value
+      if (gain > bestGain) { bestGain = gain; best = { kind: 'swap', slot, proactive: true, gain: Math.round(gain) } }
+    })
+    if (best) return best
+  }
+  return null
+}
+
+/** 1칸 조각 말고는 어떤 조각으로도 덮을 수 없는 빈칸 (줄별 비트) */
+function stuckRows(b: Board): Board {
+  const covered = new Array(ROWS).fill(0)
+  for (const p of PIECES) {
+    if (p.shape.cells === 1) continue
+    for (const s of PIECE_ORIENTS.get(p.id)!) {
+      for (let r = 0; r + s.h <= ROWS; r++) for (let c = 0; c + s.w <= COLS; c++) {
+        let ok = true
+        for (let i = 0; i < s.h; i++) if (b[r + i] & (s.rows[i] << c)) { ok = false; break }
+        if (ok) for (let i = 0; i < s.h; i++) covered[r + i] |= s.rows[i] << c
+      }
+    }
+  }
+  return b.map((row, r) => ~(row | covered[r]) & FULL_ROW)
 }
 
 /** 마우스로 조각을 집으면 커서는 조각의 가운데(위·왼쪽으로 내림) 칸을 잡는다 */

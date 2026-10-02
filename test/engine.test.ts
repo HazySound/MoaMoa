@@ -194,3 +194,29 @@ describe('안 보이는 칸에 놓기', () => {
     expect(engine.hand.every((h: any) => h.state === 'piece')).toBe(true)
   })
 })
+
+describe('다음 능력까지', () => {
+  test('조각을 놓을 때마다 하나씩 줄고 7번째에 다시 7, 점 찍기는 세지 않는다', async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { emptyBoard, place } = await import('../src/lib/core/board')
+    const one = PIECES.find((p) => p.name === '점')!
+    engine.reset()
+    engine.board = emptyBoard()
+    engine.hand = [0, 1, 2].map(() => ({ state: 'piece', selected: false, shape: one.shape, piece: one }))
+    engine.plans = []
+    engine.nextAbility = 7
+    const seq: number[] = []
+    for (let k = 0; k < 8; k++) {
+      const slot = k % 3
+      engine.hand = engine.hand.map((h: any, i: number) => (i === slot ? { ...h, state: 'piece' } : h))
+      const res = place(engine.board, one.shape, 0, k)
+      engine.applyMove({ slot, shape: one.shape, r: 0, c: k, cleared: res.cleared, board: res.board }, res.board)
+      seq.push(engine.nextAbility)
+    }
+    expect(seq).toEqual([6, 5, 4, 3, 2, 1, 7, 6])
+    const res = place(engine.board, one.shape, 1, 0)
+    engine.dots = 1
+    engine.applyMove({ slot: -1, shape: one.shape, r: 1, c: 0, cleared: [], board: res.board }, res.board)
+    expect(engine.nextAbility).toBe(6)
+  })
+})

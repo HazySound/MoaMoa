@@ -263,10 +263,20 @@
               </p>
             </div>
           </div>
-        {:else if plan && plan.risk >= 0.3 && engine.swaps > 0}
-          <div class="panel flex gap-3 p-4 text-sm" transition:slide>
-            <IconSwap class="mt-0.5 size-5 shrink-0 text-violet-300" />
-            <p class="leading-relaxed text-ink-300">판이 빡빡해요. 다음 세트에서 막히면 <b class="text-ink-100">바꿔 뽑기</b>를 아껴 두었다 쓰세요.</p>
+        {:else if engine.rescue?.proactive}
+          <div class="panel flex gap-3 border-violet-400/30! p-4 text-sm" transition:slide>
+            {#if engine.rescue.kind === 'dot'}<IconDot class="mt-0.5 size-5 shrink-0 text-sky-400" />{:else}<IconSwap class="mt-0.5 size-5 shrink-0 text-violet-400" />{/if}
+            <div class="leading-relaxed">
+              <p class="font-semibold text-ink-100">능력을 지금 쓰는 게 좋아요 <span class="font-mono text-xs font-normal text-ink-400">+{engine.rescue.gain}</span></p>
+              <p class="mt-1 text-ink-300">
+                {#if engine.rescue.kind === 'dot'}
+                  조각을 놓기 전에 <b class="text-ink-100">점 찍기</b>를 판에 표시한 칸(↓{engine.rescue.r + 1}행 →{engine.rescue.c + 1}열)에 쓰세요. 그 줄이 바로 지워져요.
+                {:else}
+                  조각을 놓기 전에 <b class="text-ink-100">바꿔 뽑기</b>로 {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’를 바꾸세요. 이대로면 다음 세트가 위험해요.
+                {/if}
+                {#if engine.held >= 6}<span class="text-ink-400"> 능력이 거의 꽉 차서({engine.held}/7) 아껴 두면 새로 못 얻어요.</span>{/if}
+              </p>
+            </div>
           </div>
         {/if}
 
@@ -363,11 +373,12 @@
               class="range mt-3 w-full"
             />
           </label>
-          <div class="grid grid-cols-3 gap-2 text-xs">
+          <div class="grid grid-cols-4 gap-2 text-xs">
             {#each [
               { label: '바꿔 뽑기', icon: IconSwap, get: () => engine.swaps, set: (v: number) => (engine.swaps = v) },
               { label: '점 찍기', icon: IconDot, get: () => engine.dots, set: (v: number) => (engine.dots = v) },
               { label: '제거한 줄', icon: null, get: () => engine.lines, set: (v: number) => (engine.lines = v) },
+              { label: '다음 능력까지', icon: null, get: () => engine.nextAbility ?? 7, set: (v: number) => (engine.nextAbility = Math.min(7, Math.max(1, v))) },
             ] as f (f.label)}
               <div class="rounded-xl bg-ink-900/70 p-2 text-center">
                 <p class="flex items-center justify-center gap-1 text-ink-400">{#if f.icon}<f.icon class="size-3" />{/if}{f.label}</p>

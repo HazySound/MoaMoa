@@ -10,7 +10,10 @@
  */
 import { emptyBoard, place, printBoard, type Board, type Icon, type Shape, ROWS, COLS } from '../src/lib/core/board'
 import { PIECES, defaultWeights, stageOf } from '../src/lib/core/pieces'
-import { rescue, solve, rng } from '../src/lib/core/solver'
+import { abilityAdvice, rescue, solve, rng } from '../src/lib/core/solver'
+
+/** 실험용: ADVICE=1이면 앱처럼 막히기 전에도 능력을 쓴다 */
+const ADVICE = process.env.ADVICE === '1'
 
 const DOT: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 export const CAP = 500_000
@@ -46,9 +49,9 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
       while (hand.some(Boolean)) {
         const input = { board, icons, hand, heldAbilities: swaps + dots, swaps, dots, weights: defaultWeights(stageOf(lines)), style, beam, budgetMs: budget }
         const plan = solve(input)[0]
-        // 다 못 놓으면 앱과 똑같이 능력 추천(rescue)을 따른다
-        if (plan?.incomplete) {
-          const help = rescue(input, plan)
+        // 앱과 똑같이 능력 추천을 따른다 (ADVICE면 막히기 전에도)
+        if (plan?.incomplete || ADVICE) {
+          const help = ADVICE ? abilityAdvice(input, plan) : rescue(input, plan)
           if (help?.kind === 'dot') {
             dots--; usedAbil++
             const r = place(board, DOT, help.r, help.c, icons, swaps + dots)

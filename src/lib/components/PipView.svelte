@@ -10,6 +10,8 @@
   import IconFlip from '~icons/lucide/flip-horizontal-2'
   import IconCheck from '~icons/lucide/check'
   import IconAlert from '~icons/lucide/triangle-alert'
+  import IconSwap from '~icons/lucide/arrow-left-right'
+  import IconDot from '~icons/lucide/circle-dot'
 
   /*
    * 게임 위에 띄워 두는 작은 창. 판과 '지금 할 일' 하나만 크게 보여 준다.
@@ -72,7 +74,7 @@
   <div class="fit-box min-h-0 flex-1">
     <div class="fit relative rounded-[14px]">
       {#if real && engine.lastFrame && engine.grid}
-        <LiveBoard frame={engine.lastFrame} grid={engine.grid} {plan} {focus} stepIdx={engine.stepIdx} />
+        <LiveBoard frame={engine.lastFrame} grid={engine.grid} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
       {:else}
         <Board board={engine.board} icons={engine.icons} {plan} {focus} stepIdx={engine.stepIdx} dot={engine.rescue?.kind === 'dot' ? engine.rescue : null} />
       {/if}
@@ -81,6 +83,14 @@
   </div>
 
   <!-- 지금 할 일 -->
+  <!-- 능력: 게임 오른쪽 '보유 능력' 칸과 같은 정보 -->
+  <div class="abil">
+    <span class="flex items-center gap-1" title="바꿔 뽑기"><IconSwap class="size-3.5 text-violet-400" /><b>{engine.swaps}</b></span>
+    <span class="flex items-center gap-1" title="점 찍기"><IconDot class="size-3.5 text-sky-400" /><b>{engine.dots}</b></span>
+    <span class="text-ink-400" class:full={engine.held >= 7}>보유 {engine.held}/7</span>
+    <span class="ml-auto text-ink-400">다음 능력 <b class="text-ink-100">{engine.nextAbility ?? '?'}</b>번</span>
+  </div>
+
   {#if plan?.incomplete}
     <div class="flex items-center gap-2 rounded-xl border border-s3/30 bg-s3/10 px-3 py-2 text-xs text-s3">
       <IconAlert class="size-4 shrink-0" />
@@ -90,6 +100,14 @@
         바꿔 뽑기 → {engine.rescue.slot + 1}번 카드 ‘{pieceName(engine.rescue.slot)}’
       {:else}
         다 못 놓아요 · 놓을 수 있는 만큼만
+      {/if}
+    </div>
+  {:else if engine.rescue?.proactive}
+    <div class="flex items-center gap-2 rounded-xl border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-xs text-ink-100">
+      {#if engine.rescue.kind === 'dot'}
+        <IconDot class="size-4 shrink-0 text-sky-400" />먼저 점 찍기 → 표시한 칸 (↓{engine.rescue.r + 1} →{engine.rescue.c + 1})
+      {:else}
+        <IconSwap class="size-4 shrink-0 text-violet-400" />먼저 바꿔 뽑기 → {engine.rescue.slot + 1}번 ‘{pieceName(engine.rescue.slot)}’
       {/if}
     </div>
   {/if}
@@ -143,6 +161,12 @@
   .status[data-s='busy'] i, .status[data-s='searching'] i { background: var(--color-s2); }
   .status[data-s='obscured'] i { background: var(--color-s3); }
 
+  .abil {
+    display: flex; align-items: center; gap: 0.8rem; padding: 0.45rem 0.7rem; border-radius: 0.8rem;
+    font-size: 0.72rem; background: rgb(var(--fg) / 0.04); border: 1px solid rgb(var(--fg) / 0.06);
+  }
+  .abil b { font-family: var(--font-mono); font-weight: 600; }
+  .abil .full { color: var(--color-s3); }
   .view {
     padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.68rem; color: var(--color-ink-300);
     background: rgb(var(--fg) / 0.05); border: 1px solid rgb(var(--fg) / 0.08);

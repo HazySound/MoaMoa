@@ -3,7 +3,7 @@
  * 추천 계산은 정해 둔 시간(기본 1.5초)을 다 쓴다. 화면이 멈추지 않게 워커에서 돌리고,
  * 진행률을 틈틈이 보내서 '계산 중' 막대를 채운다.
  */
-import { rescue, solve, type Plan, type Rescue, type SolveInput } from './core/solver'
+import { abilityAdvice, solve, type Plan, type Rescue, type SolveInput } from './core/solver'
 
 export interface SolveRequest { id: number; input: SolveInput }
 export type SolveResponse =
@@ -22,6 +22,6 @@ self.onmessage = (e: MessageEvent<SolveRequest>) => {
       self.postMessage({ id, type: 'progress', progress: p } satisfies SolveResponse)
     },
   })
-  const help = rescue(input, plans[0])
+  const help = abilityAdvice(input, plans[0])
   self.postMessage({ id, type: 'done', plans, rescue: help, ms: performance.now() - t } satisfies SolveResponse)
 }

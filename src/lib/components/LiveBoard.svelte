@@ -8,12 +8,14 @@
    * 실제 게임 판 그림 위에 놓을 칸을 칠해서 보여 준다.
    * 단순화한 판보다 게임 화면과 바로 맞춰 보기 쉽다. 화면 공유 프레임에서 판 부분만 잘라 쓴다.
    */
-  let { frame, grid, plan, focus, stepIdx }: {
+  let { frame, grid, plan, focus, stepIdx, dot = null }: {
     frame: Frame | null
     grid: Grid | null
     plan: Plan | null
     focus: number
     stepIdx: number
+    /** 점 찍기를 먼저 쓸 칸 */
+    dot?: { r: number; c: number } | null
   } = $props()
 
   const STEP_COLORS = ['#10b981', '#f59e0b', '#f43f5e']
@@ -46,6 +48,15 @@
     const ctx = canvas.getContext('2d')!
     ctx.drawImage(scratch, gx, gy, W, H, 0, 0, W, H)
 
+    if (dot) {
+      // 점 찍기 먼저: 파란 동그라미
+      ctx.lineWidth = Math.max(3, p / 9)
+      ctx.strokeStyle = '#0b1220'
+      ctx.beginPath(); ctx.arc((dot.c + 0.5) * p, (dot.r + 0.5) * p, p * 0.42, 0, Math.PI * 2); ctx.stroke()
+      ctx.strokeStyle = '#38bdf8'
+      ctx.lineWidth = Math.max(2, p / 14)
+      ctx.beginPath(); ctx.arc((dot.c + 0.5) * p, (dot.r + 0.5) * p, p * 0.42, 0, Math.PI * 2); ctx.stroke()
+    }
     const step = plan?.steps[focus]
     if (!step) return
     // 게임판이 청록이라 칠한 칸이 묻히지 않게 진하게 칠하고 짙은 테두리 + 흰 테두리를 두른다

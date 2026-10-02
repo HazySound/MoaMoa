@@ -4,11 +4,12 @@
  */
 import { test } from 'vitest'
 import { playGame } from './simlib'
-import { W } from '../src/lib/core/solver'
+import { ADV, W } from '../src/lib/core/solver'
 
 test.skipIf(!process.env.SIM)('self-play', () => {
   // 가중치를 바꿔 보는 실험: W_JSON='{"p1":200}'
   if (process.env.W_JSON) Object.assign(W, JSON.parse(process.env.W_JSON))
+  if (process.env.ADV_JSON) Object.assign(ADV, JSON.parse(process.env.ADV_JSON))
   const games = +(process.env.GAMES ?? 4), maxSets = +(process.env.SETS ?? 150)
   const style = +(process.env.STYLE ?? 0.2), budget = +(process.env.BUDGET ?? 0), beam = +(process.env.BEAM ?? 160)
   const out: string[] = []
@@ -16,7 +17,7 @@ test.skipIf(!process.env.SIM)('self-play', () => {
   const combos = [0, 0, 0, 0, 0, 0]
   const t0 = performance.now()
   for (let gi = 0; gi < games; gi++) {
-    const r = playGame(gi, { maxSets, style, budget, beam, debug: !!process.env.DEBUG })
+    const r = playGame(gi + +(process.env.OFFSET ?? 0), { maxSets, style, budget, beam, debug: !!process.env.DEBUG })
     tSets += r.sets; tScore += r.score; tAbil += r.usedAbil
     r.combos.forEach((n, i) => (combos[i] += n))
     out.push(`game ${gi}: sets=${r.sets} score=${r.score} lines=${r.lines} abilitiesUsed=${r.usedAbil}`)

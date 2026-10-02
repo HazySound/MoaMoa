@@ -77,6 +77,13 @@ class Engine {
   swaps = $state(0)
   dots = $state(0)
   lines = $state(0)
+  /**
+   * 다음 능력 아이콘까지 남은 배치 수 (게임 화면의 '다음 능력 획득까지 N번').
+   * 조각을 7번 놓을 때마다 아이콘이 생긴다. 점 찍기는 세지 않는다. 모르면 null이고,
+   * 새 아이콘이 나타나는 순간 7로 맞춘다.
+   */
+  nextAbility = $state<number | null>(null)
+  get held() { return this.swaps + this.dots }
 
   /** 실제로 나온 조각 수 (단계별) */
   pieceCounts = $state<Counts>(loadCounts())
@@ -408,6 +415,7 @@ class Engine {
     const fresh = B.every((row) => row === 0) && cards.every((c) => c.state === 'piece')
     if (fresh) {
       this.startGame()
+      this.nextAbility = 7
       this.lines = 0
       this.swaps = 0
       this.dots = 0
@@ -450,6 +458,7 @@ class Engine {
       if (mv.slot < 0) g.dotsUsed++
       else g.pieces++
     })
+    if (mv.slot >= 0 && this.nextAbility !== null) this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
     this.board = B
     this.updatedAt = Date.now()
     if (mv.slot < 0) {
@@ -494,7 +503,14 @@ class Engine {
       if (isIconState(st)) {
         const kind: Icon['kind'] = st.startsWith('icon-dot') ? 'dot' : 'swap'
         if (!t) { this.iconTrack.set(i, { kind, seen: 1, miss: 0 }); if (need === 1) changed = true; return }
-        if (++t.seen === need) changed = true
+        if (++t.seen === need) {
+          changed = true
+          // 새 아이콘이 생겼다 = 방금 7번째 배치였다. 세던 값이 어긋났으면 여기서 맞춘다
+          if (this.updatedAt && this.nextAbility !== 7) {
+            if (this.nextAbility !== null) this.log('능력 카운트 보정', `${this.nextAbility} → 7`)
+            this.nextAbility = 7
+          }
+        }
         t.miss = 0
         if (t.kind !== kind) { t.kind = kind; changed = true }
       } else if (t && st !== 'cursor' && st !== 'unknown' && !((B[r] >> c) & 1)) {
