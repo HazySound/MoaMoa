@@ -323,3 +323,30 @@ describe('새 아이콘이 늦게 보일 때', () => {
     expect(engine.icons.length).toBe(1)
   })
 })
+
+describe('능력 획득 누락 (줄을 안 지운 배치에서 생긴 아이콘)', () => {
+  test('7번째 배치로 생긴 아이콘은 그 뒤 다른 배치로 그 줄을 지우면 획득한다', async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    const { parseBoard, place } = await import('../src/lib/core/board')
+    const dot = PIECES.find((p) => p.name === '점')!
+    engine.reset()
+    engine.board = parseBoard('########..')
+    engine.updatedAt = Date.now()
+    engine.swaps = 0
+    engine.dots = 0
+    engine.plans = []
+    engine.hand = [0, 1, 2].map(() => ({ state: 'piece', selected: false, shape: dot.shape, piece: dot }))
+    // 배치 1: 8열에 놓는다 (줄은 안 지워짐). 이 배치 직후 같은 줄 9열... 이 아니라 다른 칸(3,3)에 아이콘이 생긴다
+    const a = place(engine.board, dot.shape, 15, 8)
+    const cells = (iconAt: number) => Array.from({ length: 160 }, (_, i) => (i === iconAt ? 'icon-swap' : 'empty'))
+    for (let i = 0; i < 2; i++) engine.trackIcons(cells(15 * 10 + 9), a.board, 2) // 판이 바뀌는 중에 처음 보임 → 방금 생김
+    engine.applyMove({ slot: 0, shape: dot.shape, r: 15, c: 8, cleared: a.cleared, board: a.board }, a.board)
+    expect(engine.icons).toEqual([{ r: 15, c: 9, kind: 'swap' }])
+    // 배치 2: 아이콘 칸(9열)에 놓아 그 줄을 지운다 → 획득
+    const b = place(engine.board, dot.shape, 15, 9)
+    expect(b.cleared).toEqual([15])
+    engine.applyMove({ slot: 1, shape: dot.shape, r: 15, c: 9, cleared: b.cleared, board: b.board }, b.board)
+    expect(engine.swaps).toBe(1)
+    expect(engine.icons).toEqual([])
+  })
+})

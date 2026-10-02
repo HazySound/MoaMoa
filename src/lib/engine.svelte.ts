@@ -399,6 +399,7 @@ class Engine {
     this.hand = hand
     if (swapped) {
       this.swaps = Math.max(0, this.swaps - 1)
+      this.log('바꿔 뽑기 사용', `→ ⇄${this.swaps} ◎${this.dots}`)
       this.logGame((g) => g.swapsUsed++)
       this.requestSolve('바꿔 뽑기를 써서')
     }
@@ -505,15 +506,18 @@ class Engine {
         if (ic.fresh) { ic.fresh = false; continue }
         if (ic.seen < this.iconNeed) { this.iconTrack.delete(idx); continue }
         // 7개를 들고 있으면 획득하지 못하고 아이콘은 판에 그대로 남는다 (공지)
-        if (this.heldForSolve >= 7) continue
+        if (this.heldForSolve >= 7) { this.log('꽉 차서 못 얻음', ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'); continue }
         this.iconTrack.delete(idx)
         got++
         if (ic.kind === 'dot') this.dots++
         else this.swaps++
+        this.log('능력 획득', `${ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'} → ⇄${this.swaps} ◎${this.dots}`)
       }
-      for (const ic of this.iconTrack.values()) ic.fresh = false
       this.publishIcons()
     }
+    // 이번 배치에서 새로 생긴 아이콘도 이제는 판에 있던 아이콘이다. 줄을 안 지운 배치에서도 꼭 풀어야
+    // 다음에 그 줄을 지울 때 획득으로 센다 (전에는 줄을 지운 배치에서만 풀어서 획득이 자주 빠졌다)
+    for (const ic of this.iconTrack.values()) ic.fresh = false
     this.logGame((g) => {
       g.score += mv.shape.cells + lineScore(mv.cleared.length) + got * ABILITY_SCORE
       g.lines += mv.cleared.length
@@ -534,6 +538,7 @@ class Engine {
     if (mv.slot < 0) {
       // 점 찍기를 썼다
       this.dots = Math.max(0, this.dots - 1)
+      this.log('점 찍기 사용', `→ ⇄${this.swaps} ◎${this.dots}`)
       this.requestSolve('점 찍기를 써서')
       return
     }
