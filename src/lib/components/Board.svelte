@@ -106,26 +106,26 @@
     background:
       linear-gradient(180deg, rgb(45 212 191 / 0.06), rgb(56 189 248 / 0.03)),
       var(--color-ink-900);
-    border: 1px solid rgb(255 255 255 / 0.06);
-    box-shadow: inset 0 2px 20px rgb(0 0 0 / 0.5);
+    border: 1px solid rgb(var(--fg) / 0.06);
+    box-shadow: inset 0 2px 16px var(--shadow);
   }
   .cell {
     position: relative;
     border-radius: 6px;
-    background: rgb(255 255 255 / 0.03);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.025);
+    background: rgb(var(--fg) / 0.03);
+    box-shadow: inset 0 0 0 1px rgb(var(--fg) / 0.025);
     transition: background-color 300ms var(--ease-out-expo);
   }
   .cell.filled {
-    background: linear-gradient(160deg, #4a5d77, #2e3d52);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), inset 0 -2px 0 rgb(0 0 0 / 0.25);
+    background: linear-gradient(160deg, var(--block-a), var(--block-b));
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), inset 0 -2px 0 rgb(0 0 0 / 0.18);
   }
   .cell.clearing::after {
     content: '';
     position: absolute;
     inset: -1px;
     border-radius: 6px;
-    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.28), transparent);
+    background: linear-gradient(90deg, transparent, rgb(var(--fg) / 0.28), transparent);
     background-size: 200% 100%;
     animation: shimmer 1.6s linear infinite;
     pointer-events: none;

@@ -122,3 +122,16 @@ describe('막혔을 때 능력', () => {
     expect(r).toEqual({ kind: 'swap', slot: 0 })
   })
 })
+
+describe('조각 빈도', () => {
+  test('표본이 쌓일수록 실제 빈도 쪽으로 옮겨 간다', async () => {
+    const { blendedWeights, record } = await import('../src/lib/core/stats')
+    const dot = PIECES.find((p) => p.name === '점')!.id
+    const before = blendedWeights({}, 1).get(dot)!
+    let c = {}
+    for (let i = 0; i < 200; i++) c = record(c, 1, [dot])
+    const after = blendedWeights(c, 1).get(dot)!
+    expect(after).toBeGreaterThan(before * 3)
+    expect([...blendedWeights(c, 1).values()].reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6)
+  })
+})

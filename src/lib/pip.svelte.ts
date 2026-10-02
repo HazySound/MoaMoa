@@ -7,6 +7,7 @@
  */
 import { mount, unmount } from 'svelte'
 import { engine } from './engine.svelte'
+import { theme } from './theme.svelte'
 import PipView from './components/PipView.svelte'
 
 interface DocumentPictureInPicture {
@@ -37,12 +38,17 @@ class Pip {
     copyStyles(win.document)
     win.document.documentElement.lang = 'ko'
     win.document.title = '모아모아 도우미'
+    // 작은 창도 원래 창과 같은 테마로, 바꾸면 같이 바뀐다
+    const stopTheme = $effect.root(() => {
+      $effect(() => { win.document.documentElement.dataset.theme = theme.current })
+    })
     const app = mount(PipView, { target: win.document.body })
     this.win = win
     this.open = true
     engine.setTimerHost(win)
     win.addEventListener('pagehide', () => {
       unmount(app)
+      stopTheme()
       this.win = null
       this.open = false
       engine.setTimerHost(window)

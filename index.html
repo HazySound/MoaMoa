@@ -4,7 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0a1018" />
+    <meta name="theme-color" content="#1b1e23" />
+    <script>
+      // 첫 그림부터 고른 테마로 (theme.svelte.ts와 같은 규칙)
+      try {
+        var t = localStorage.getItem('moamoa.theme')
+        document.documentElement.dataset.theme = t === 'light' || t === 'dark' ? t : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+      } catch (e) { document.documentElement.dataset.theme = 'dark' }
+    </script>
     <meta name="description" content="메이플스토리 한글 모아모아 미니게임 화면을 읽어서 조각 배치를 추천해 주는 도우미" />
     <title>모아모아 도우미</title>
   </head>

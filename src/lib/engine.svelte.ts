@@ -10,7 +10,8 @@
  */
 import { boardKey, canonicalKey, COLS, emptyBoard, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
 import { explainMove, type Move } from './core/track'
-import { defaultWeights, identify, stageOf, type PieceDef } from './core/pieces'
+import { identify, stageOf, type PieceDef } from './core/pieces'
+import { blendedWeights, loadCounts, record, saveCounts, seenIn, type Counts } from './core/stats'
 import type { Plan, Rescue, Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
@@ -69,6 +70,10 @@ class Engine {
   swaps = $state(0)
   dots = $state(0)
   lines = $state(0)
+
+  /** 실제로 나온 조각 수 (단계별) */
+  pieceCounts = $state<Counts>(loadCounts())
+  get seenThisStage() { return seenIn(this.pieceCounts, this.stage) }
 
   /** 디버그 미리보기용: 마지막으로 읽은 프레임 */
   lastFrame = $state.raw<Frame | null>(null)
@@ -283,6 +288,11 @@ class Engine {
 
   private newSet(cards: CardRead[]) {
     this.hand = cards.map((c) => ({ state: 'piece', selected: c.selected, shape: c.shape, piece: c.shape ? identify(c.shape) : null }))
+    // 실시간으로 새 세트를 볼 때만 센다 (스크린샷이나 중간부터 맞춘 세트는 빼서 같은 세트를 두 번 세지 않는다)
+    if (this.live) {
+      this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
+      saveCounts(this.pieceCounts)
+    }
     this.updatedAt = Date.now()
     this.requestSolve()
   }
@@ -388,7 +398,7 @@ class Engine {
       input: {
         board: $state.snapshot(this.board), icons: $state.snapshot(this.icons), hand: $state.snapshot(hand) as (Shape | null)[],
         heldAbilities: this.swaps + this.dots, swaps: this.swaps, dots: this.dots,
-        weights: defaultWeights(this.stage), style: this.style, budgetMs: this.thinkMs,
+        weights: blendedWeights(this.pieceCounts, this.stage), style: this.style, budgetMs: this.thinkMs,
       },
     }
     this.worker.postMessage(req)

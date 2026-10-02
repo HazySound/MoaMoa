@@ -4,6 +4,7 @@
   import { Tween } from 'svelte/motion'
   import { engine } from './lib/engine.svelte'
   import { pip } from './lib/pip.svelte'
+  import { theme } from './lib/theme.svelte'
   import Board from './lib/components/Board.svelte'
   import MiniShape from './lib/components/MiniShape.svelte'
   import SourcePreview from './lib/components/SourcePreview.svelte'
@@ -25,6 +26,8 @@
   import IconChevron from '~icons/lucide/chevron-down'
   import IconLock from '~icons/lucide/lock'
   import IconPip from '~icons/lucide/picture-in-picture-2'
+  import IconSun from '~icons/lucide/sun'
+  import IconMoon from '~icons/lucide/moon'
 
   const STEP_COLORS = ['var(--color-s1)', 'var(--color-s2)', 'var(--color-s3)']
   const PIECE_COLORS: Record<string, string> = { pink: '#f472b6', green: '#84cc16', blue: '#38bdf8', yellow: '#facc15' }
@@ -119,6 +122,18 @@
           <i></i>{statusText[engine.status]}
         </span>
       {/if}
+      <button
+        class="btn ghost icon"
+        onclick={() => theme.toggle()}
+        aria-label={theme.current === 'light' ? '다크 모드로' : '라이트 모드로'}
+        title={theme.current === 'light' ? '다크 모드로' : '라이트 모드로'}
+      >
+        {#key theme.current}
+          <span class="grid place-items-center" in:fly={{ y: 6, duration: 250 }}>
+            {#if theme.current === 'light'}<IconMoon class="size-4" />{:else}<IconSun class="size-4" />{/if}
+          </span>
+        {/key}
+      </button>
       {#if pip.supported}
         <button class="btn ghost" class:on={pip.open} onclick={() => pip.toggle()} title="게임 위에 늘 떠 있는 작은 창">
           <IconPip class="size-4" />{pip.open ? '작은 창 닫기' : '작은 창'}
@@ -169,7 +184,7 @@
           ['‘작은 창’을 띄워 게임 옆에 두세요', '늘 위에 떠 있는 작은 창에 판과 지금 할 일이 나와요. 게임을 보면서 바로 놓을 수 있어요.'],
           ['추천대로 놓아요', '번호 순서대로, 표시된 방향으로 돌린 뒤 커서 표시 칸에 클릭하면 돼요. 놓을 때마다 알아서 다음 단계로 넘어가요.'],
         ] as [t, d], i}
-          <li class="flex gap-4 rounded-2xl p-4 transition-colors hover:bg-white/[0.03]" in:fly={{ y: 12, delay: 120 + i * 90, duration: 500, easing: cubicOut }}>
+          <li class="flex gap-4 rounded-2xl p-4 transition-colors hover:bg-fg/[0.03]" in:fly={{ y: 12, delay: 120 + i * 90, duration: 500, easing: cubicOut }}>
             <span class="grid size-8 shrink-0 place-items-center rounded-full font-mono text-sm font-semibold text-ink-950" style="background:{STEP_COLORS[i % 3]}">{i + 1}</span>
             <div>
               <p class="font-semibold">{t}</p>
@@ -209,7 +224,7 @@
 
       <section class="flex min-w-0 flex-col gap-4">
         <!-- 요약 -->
-        <div class="panel grid grid-cols-3 divide-x divide-white/5 p-1">
+        <div class="panel grid grid-cols-3 divide-x divide-fg/5 p-1">
           <div class="p-4">
             <p class="text-xs text-ink-400">이번 세트 점수</p>
             <p class="mt-1 font-mono text-2xl font-semibold text-ink-100">+{Math.round(gainedTween.current).toLocaleString()}</p>
@@ -221,7 +236,7 @@
           <div class="p-4">
             <p class="text-xs text-ink-400">다음 세트 위험도</p>
             <p class="mt-1 text-2xl font-bold" style="color:{riskColor}">{riskLabel}</p>
-            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-fg/5">
               <div class="h-full rounded-full" style="width:{Math.max(4, riskTween.current * 100)}%;background:{riskColor}"></div>
             </div>
           </div>
@@ -376,7 +391,7 @@
           </label>
           <p class="text-[11px] leading-relaxed text-ink-500 sm:col-span-2">
             능력과 제거한 줄 수는 판 변화로 자동으로 세요. 중간부터 켰다면 게임 화면에 맞춰 고쳐 주세요.
-            지금 {engine.stage}단계 기준으로 다음 조각 확률을 어림해요.
+            지금 {engine.stage}단계 기준으로 다음 조각 확률을 어림해요. 이 단계에서 실제로 본 조각 {engine.seenThisStage}개를 반영했어요(많을수록 정확해져요).
           </p>
         </div>
 
@@ -422,11 +437,11 @@
     padding: 7px;
     border-radius: 12px;
     background: var(--color-ink-800);
-    border: 1px solid rgb(255 255 255 / 0.06);
+    border: 1px solid rgb(var(--fg) / 0.06);
   }
-  .logo span { width: 7px; height: 7px; border-radius: 2px; background: rgb(255 255 255 / 0.06); }
+  .logo span { width: 7px; height: 7px; border-radius: 2px; background: rgb(var(--fg) / 0.06); }
   .grad {
-    background: linear-gradient(90deg, var(--color-s1), #7dd3fc 50%, var(--color-s2));
+    background: linear-gradient(90deg, var(--color-s1), color-mix(in oklab, var(--color-s1) 50%, var(--color-s2)) 50%, var(--color-s2));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -446,13 +461,14 @@
   .btn.lg { height: 3rem; padding: 0 1.4rem; font-size: 0.95rem; border-radius: 0.95rem; }
   .btn.sm { height: 2rem; padding: 0 0.75rem; font-size: 0.8rem; }
   .btn.primary {
-    color: var(--color-ink-950);
-    background: linear-gradient(180deg, #5eead4, var(--color-s1));
-    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.2) inset, 0 8px 24px -8px rgb(45 212 191 / 0.6);
+    color: var(--on-accent);
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-s1) 78%, white), var(--color-s1));
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.2) inset, 0 8px 24px -8px color-mix(in oklab, var(--color-s1) 60%, transparent);
   }
-  .btn.primary:hover { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.3) inset, 0 10px 30px -8px rgb(45 212 191 / 0.8); }
-  .btn.ghost { color: var(--color-ink-200); background: rgb(255 255 255 / 0.05); border: 1px solid rgb(255 255 255 / 0.08); }
-  .btn.ghost:hover { background: rgb(255 255 255 / 0.09); }
+  .btn.primary:hover { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.3) inset, 0 10px 30px -8px color-mix(in oklab, var(--color-s1) 80%, transparent); }
+  .btn.ghost { color: var(--color-ink-200); background: rgb(var(--fg) / 0.05); border: 1px solid rgb(var(--fg) / 0.08); }
+  .btn.ghost:hover { background: rgb(var(--fg) / 0.09); }
+  .btn.icon { width: 2.5rem; padding: 0; justify-content: center; }
   .btn.ghost.on { color: var(--color-s1); border-color: rgb(45 212 191 / 0.4); background: rgb(45 212 191 / 0.08); }
 
   .status {
@@ -464,8 +480,8 @@
     border-radius: 999px;
     font-size: 0.75rem;
     color: var(--color-ink-200);
-    background: rgb(255 255 255 / 0.04);
-    border: 1px solid rgb(255 255 255 / 0.07);
+    background: rgb(var(--fg) / 0.04);
+    border: 1px solid rgb(var(--fg) / 0.07);
   }
   .status i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-ink-400); }
   .status[data-s='live'] i { background: var(--color-s1); box-shadow: 0 0 0 0 rgb(45 212 191 / 0.6); animation: ping 1.8s infinite; }
@@ -478,7 +494,7 @@
     flex: 1;
     display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
     height: 2.4rem; border-radius: 0.8rem; font-size: 0.85rem; font-weight: 600;
-    color: var(--color-ink-300); background: rgb(255 255 255 / 0.03); border: 1px solid rgb(255 255 255 / 0.06);
+    color: var(--color-ink-300); background: rgb(var(--fg) / 0.03); border: 1px solid rgb(var(--fg) / 0.06);
     transition: all 250ms var(--ease-out-expo);
   }
   .step-tab .num {
@@ -497,21 +513,21 @@
   }
   .chip {
     display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.55rem; border-radius: 999px;
-    color: var(--color-ink-100); background: rgb(255 255 255 / 0.07);
+    color: var(--color-ink-100); background: rgb(var(--fg) / 0.07);
   }
   .chip.ok { color: var(--color-s1); background: rgb(45 212 191 / 0.12); }
-  .chip.muted { color: var(--color-ink-400); background: transparent; border: 1px solid rgb(255 255 255 / 0.07); font-family: var(--font-mono); }
+  .chip.muted { color: var(--color-ink-400); background: transparent; border: 1px solid rgb(var(--fg) / 0.07); font-family: var(--font-mono); }
 
   .alt {
     padding: 0.35rem 0.7rem; border-radius: 999px; color: var(--color-ink-300);
-    background: rgb(255 255 255 / 0.03); border: 1px solid rgb(255 255 255 / 0.07); font-family: var(--font-mono);
+    background: rgb(var(--fg) / 0.03); border: 1px solid rgb(var(--fg) / 0.07); font-family: var(--font-mono);
   }
   .alt.active { color: var(--color-ink-950); background: var(--color-ink-100); }
 
   .hand {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     min-height: 6.5rem; padding: 0.75rem; border-radius: 0.9rem;
-    background: rgb(0 0 0 / 0.2); border: 1px solid rgb(255 255 255 / 0.05);
+    background: rgb(var(--fg) / 0.03); border: 1px solid rgb(var(--fg) / 0.06);
     transition: all 250ms var(--ease-out-expo);
   }
   .hand.selected { border-color: rgb(251 191 36 / 0.5); background: rgb(251 191 36 / 0.07); }
@@ -519,14 +535,14 @@
 
   .stepper {
     width: 1.4rem; height: 1.4rem; border-radius: 0.45rem; color: var(--color-ink-300);
-    background: rgb(255 255 255 / 0.05);
+    background: rgb(var(--fg) / 0.05);
   }
-  .stepper:hover { background: rgb(255 255 255 / 0.1); color: white; }
+  .stepper:hover { background: rgb(var(--fg) / 0.1); color: white; }
 
   .range { appearance: none; height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--color-s1), var(--color-s2), var(--color-s3)); }
   .range::-webkit-slider-thumb {
     appearance: none; width: 18px; height: 18px; border-radius: 50%; background: white;
-    box-shadow: 0 0 0 4px rgb(255 255 255 / 0.15), 0 2px 6px rgb(0 0 0 / 0.5); cursor: pointer;
+    box-shadow: 0 0 0 4px rgb(var(--fg) / 0.15), 0 2px 6px rgb(0 0 0 / 0.5); cursor: pointer;
   }
   .range::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: white; }
 </style>

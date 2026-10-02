@@ -80,7 +80,7 @@
   {/if}
 
   {#if engine.solving}
-    <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-300">새 세트 계산 중 · 잠시만요</div>
+    <div class="rounded-xl bg-fg/[0.04] px-3 py-3 text-center text-xs text-ink-300">새 세트 계산 중 · 잠시만요</div>
   {:else if step && !done}
     {#key `${engine.planIdx}:${focus}`}
       <div class="now" style="--c:{STEP_COLORS[focus]}" in:fly={{ y: 10, duration: 350, easing: cubicOut }}>
@@ -105,9 +105,9 @@
       </div>
     {/key}
   {:else if done}
-    <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-300">세트 완료 · 새 조각을 기다리는 중</div>
+    <div class="rounded-xl bg-fg/[0.04] px-3 py-3 text-center text-xs text-ink-300">세트 완료 · 새 조각을 기다리는 중</div>
   {:else}
-    <div class="rounded-xl bg-white/[0.04] px-3 py-3 text-center text-xs text-ink-400">
+    <div class="rounded-xl bg-fg/[0.04] px-3 py-3 text-center text-xs text-ink-400">
       {engine.live ? '보유 조각을 읽으면 추천이 떠요' : '원래 창에서 화면 공유를 시작해 주세요'}
     </div>
   {/if}
@@ -121,7 +121,7 @@
 
   .status {
     display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.6rem; border-radius: 999px;
-    color: var(--color-ink-200); background: rgb(255 255 255 / 0.05);
+    color: var(--color-ink-200); background: rgb(var(--fg) / 0.05);
   }
   .status i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-ink-400); }
   .status[data-s='live'] i { background: var(--color-s1); }
@@ -149,7 +149,7 @@
   }
   .chip {
     display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.15rem 0.45rem; border-radius: 999px;
-    color: var(--color-ink-100); background: rgb(255 255 255 / 0.08);
+    color: var(--color-ink-100); background: rgb(var(--fg) / 0.08);
   }
   .chip.ok { color: var(--color-s1); background: rgb(45 212 191 / 0.14); }
 </style>

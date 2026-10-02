@@ -16,7 +16,7 @@
 <div class="veil" transition:fade={{ duration: 180 }} role="status" aria-live="polite">
   <div class="flex flex-col items-center gap-2">
     <svg width={compact ? 56 : 68} height={compact ? 56 : 68} viewBox="0 0 64 64" class="-rotate-90">
-      <circle cx="32" cy="32" r={R} fill="none" stroke="rgb(255 255 255 / 0.1)" stroke-width="5" />
+      <circle cx="32" cy="32" r={R} fill="none" stroke="rgb(var(--fg) / 0.1)" stroke-width="5" />
       <circle
         cx="32" cy="32" r={R} fill="none" stroke="url(#thinking-grad)" stroke-width="5" stroke-linecap="round"
         stroke-dasharray={C} stroke-dashoffset={C * (1 - Math.max(0.03, shown.current))}
@@ -41,7 +41,7 @@
     display: grid;
     place-items: center;
     border-radius: inherit;
-    background: rgb(7 11 17 / 0.55);
+    background: color-mix(in oklab, var(--color-ink-950) 62%, transparent);
     backdrop-filter: blur(3px);
   }
 </style>
