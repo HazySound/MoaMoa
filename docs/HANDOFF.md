@@ -21,11 +21,15 @@ npm run check        # svelte-check + tsc
 ```
 
 배포는 Cloudflare Workers 정적 자산이다 (Pages가 Workers에 합쳐지면서 wrangler가 자동 전환).
+**`main`에 푸시하면 자동 배포된다** (2026-10-02부터 Cloudflare 대시보드의 Workers Builds에 GitHub 레포 연결).
+그래서 사용자가 "플레이 중"이라고 하면 푸시도 하지 않는다. 손으로 올려야 할 때만 아래를 쓴다.
 
 ```sh
 npx wrangler login   # 새 PC에서 한 번. 계정: cemigs1@gmail.com
 npm run deploy       # vite build → wrangler deploy (wrangler.jsonc가 dist를 올린다)
 ```
+
+- 배포된 버전은 사이트 맨 아래 `날짜 · 커밋` 글씨로 확인한다
 
 - `@cloudflare/vite-plugin`은 **넣지 않는다.** wrangler가 처음 배포할 때 자동으로 넣는데 vitest를 깨뜨린다
   ("There is already a server associated with the config"). 서버 코드 없는 정적 사이트라 필요 없다.
