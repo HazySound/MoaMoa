@@ -4,7 +4,7 @@
 
 ## 규칙
 - 사용자와는 한국어로. 코드 주석도 한국어로 '왜'를 적는다
-- 변경 뒤: `npm test` → `npm run check` → 커밋 → `git push origin main`. 푸시하면 GitHub Actions(.github/workflows/deploy.yml)가 테스트 뒤 자동 배포한다
+- 변경 뒤: `npm test` → `npm run check` → 커밋 → `git push origin main`. 푸시하면 Cloudflare Workers Builds(대시보드에서 GitHub 연결)가 자동 배포한다
   - 사용자가 "플레이 중"이라고 하면 푸시하지 말고 로컬 커밋만 (푸시 = 배포)
 - 버그 제보는 추측으로 원인을 단정하지 말고, 캡처를 test/fixtures에 넣어 재현 테스트부터 만든다
 - 추적 로직(src/lib/engine.svelte.ts)을 고치면 test/engine.test.ts에 그 상황을 테스트로 남긴다
