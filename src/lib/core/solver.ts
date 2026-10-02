@@ -151,7 +151,27 @@ export const W = {
   win33: 0,
   /** 3×4·4×3 빈 공간 수 (ㅂ·ㅐ·ㅋ·ㅌ 자리) */
   win34: 0,
+  /**
+   * 연속 제거 준비: 같은 열 한 칸만 빈 줄이 위아래로 이어진 '우물'.
+   * 블록이 떨어지지 않는 게임이라 세로 조각(ㅣ 5칸, ㅡ 3칸)을 꽂으면 그 줄들이 한 번에 지워진다.
+   * 5줄을 한 번에 지우면 7,500점으로 한 줄씩(1,500점)의 다섯 배라서 점수 위주 플레이의 핵심이다.
+   */
+  well: 0,
+  /** 빈칸 두 칸이 같은 자리인 줄이 이어진 것 (두 줄짜리 조각으로 함께 지울 수 있다) */
+  align: 0,
+  /**
+   * 우물 전용 열(맨 오른쪽)에 쌓인 칸 하나당 벌점. 테트리스의 '우물 비워 두기'처럼
+   * 나머지 9칸으로만 줄을 채우게 해서 빈칸이 한 열에 줄 서게 만든다.
+   * 지우면서 채우는 건 괜찮다 (지워진 줄의 칸은 남지 않으니 벌점도 없다).
+   */
+  wellCol: 0,
 }
+
+/** 우물로 비워 둘 열 */
+const WELL_COLUMN = COLS - 1
+
+/** 이어진 줄 수별 연속 제거 값어치. 지우는 점수가 n²로 늘어서 이것도 그렇게 늘린다 */
+const RUN_VALUE = [0, 0, 1, 3, 6, 10]
 
 function quickEval(b: Board, style: number): number {
   let v = 0, filled = 0, emptyRows = 0
@@ -186,6 +206,25 @@ function quickEval(b: Board, style: number): number {
     }
     // 한두 군데만 있어도 큰 조각은 들어간다. 많을수록 덜 중요해지게 제곱근으로
     v += Math.sqrt(w33) * W.win33 + Math.sqrt(w34) * W.win34
+  }
+  if (W.wellCol) {
+    let n = 0
+    for (let r = 0; r < ROWS; r++) n += (b[r] >> WELL_COLUMN) & 1
+    v -= n * W.wellCol
+  }
+  if (W.well || W.align) {
+    // 빈칸 모양이 같은 줄이 위아래로 몇 줄 이어지는지 센다 (빈칸 1칸 → 우물, 2칸 → 정렬)
+    let r = 0
+    while (r < ROWS) {
+      const e = ~b[r] & FULL_ROW
+      const n = popcount(e)
+      if (n === 0 || n > 2) { r++; continue }
+      let len = 1
+      while (r + len < ROWS && (~b[r + len] & FULL_ROW) === e) len++
+      const val = RUN_VALUE[Math.min(len, 5)] + (len > 5 ? len - 5 : 0)
+      v += val * (n === 1 ? W.well : W.align)
+      r += len
+    }
   }
   return v
 }

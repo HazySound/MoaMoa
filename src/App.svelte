@@ -9,6 +9,7 @@
   import MiniShape from './lib/components/MiniShape.svelte'
   import SourcePreview from './lib/components/SourcePreview.svelte'
   import Thinking from './lib/components/Thinking.svelte'
+  import StatsPanel from './lib/components/StatsPanel.svelte'
   import { PIECES, identify } from './lib/core/pieces'
   import IconScreen from '~icons/lucide/monitor-up'
   import IconStop from '~icons/lucide/square'
@@ -394,6 +395,8 @@
             지금 {engine.stage}단계 기준으로 다음 조각 확률을 어림해요. 이 단계에서 실제로 본 조각 {engine.seenThisStage}개를 반영했어요(많을수록 정확해져요).
           </p>
         </div>
+
+        <StatsPanel />
 
         <!-- 인식 화면 -->
         <div class="panel overflow-hidden">

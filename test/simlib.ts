@@ -25,13 +25,14 @@ function drawPiece(rand: () => number, lines: number): Shape {
   return PIECES.at(-1)!.shape
 }
 
-export interface GameResult { sets: number; score: number; lines: number; usedAbil: number }
+export interface GameResult { sets: number; score: number; lines: number; usedAbil: number; combos: number[] }
 
 export function playGame(gi: number, o: { maxSets: number; style: number; budget: number; beam: number; debug?: boolean }): GameResult {
   const { maxSets, style, budget, beam } = o
     const rand = rng(1000 + gi * 7919)
     let board: Board = emptyBoard(), icons: Icon[] = [], score = 0, lines = 0, sets = 0
     let placed = 0, swaps = 0, dots = 0, usedAbil = 0
+    const combos = [0, 0, 0, 0, 0, 0]
     const give = (got: Icon['kind'][]) => { for (const k of got) { if (swaps + dots >= 7) break; if (k === 'swap') swaps++; else dots++ } }
     const spawn = () => {
       const empty: [number, number][] = []
@@ -62,6 +63,7 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
           for (const st of steps) {
             const r = place(board, st.shape, st.r, st.c, icons, swaps + dots)
             board = r.board; icons = r.icons; score += r.gained; lines += r.cleared.length; give(r.abilities)
+            combos[Math.min(5, r.cleared.length)]++
             hand[st.slot] = null
             if (++placed % 7 === 0) spawn()
           }
@@ -75,5 +77,5 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
         break outer
       }
     }
-  return { sets, score: Math.min(score, CAP), lines, usedAbil }
+  return { sets, score: Math.min(score, CAP), lines, usedAbil, combos }
 }

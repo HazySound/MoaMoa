@@ -289,21 +289,39 @@ class Engine {
   private newSet(cards: CardRead[]) {
     this.hand = cards.map((c) => ({ state: 'piece', selected: c.selected, shape: c.shape, piece: c.shape ? identify(c.shape) : null }))
     // 실시간으로 새 세트를 볼 때만 센다 (스크린샷이나 중간부터 맞춘 세트는 빼서 같은 세트를 두 번 세지 않는다)
-    if (this.live) {
-      this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
-      saveCounts(this.pieceCounts)
-    }
+    if (this.live) this.recordSet()
     this.updatedAt = Date.now()
     this.requestSolve()
   }
 
+  private recordSet() {
+    this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
+    saveCounts(this.pieceCounts)
+  }
+
+  resetStats() {
+    this.pieceCounts = {}
+    saveCounts(this.pieceCounts)
+  }
+
   /** 화면에 보이는 대로 처음부터 다시 맞춘다 */
   private resync(B: Board, cards: CardRead[]) {
+    // 판이 텅 비고 카드 세 장이 다 새것이면 새 게임이다. 줄 수(=단계)와 능력을 처음부터 센다
+    const fresh = B.every((row) => row === 0) && cards.every((c) => c.state === 'piece')
+    if (fresh) {
+      this.lines = 0
+      this.swaps = 0
+      this.dots = 0
+      this.iconTrack.clear()
+      this.publishIcons()
+    }
     this.board = B
     this.hand = cards.map((c) => ({
       state: c.state === 'piece' ? 'piece' : 'used', selected: c.selected, shape: c.shape,
       piece: c.shape ? identify(c.shape) : null,
     }))
+    // 새 게임의 첫 세트도 통계에 넣는다
+    if (fresh && this.live) this.recordSet()
     this.keys = {}
     this.counts = {}
     this.updatedAt = Date.now()
