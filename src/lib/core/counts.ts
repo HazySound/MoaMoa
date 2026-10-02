@@ -13,7 +13,7 @@ import { PANEL_DIST, PANEL_SHAPES, dist, matchShape, type Glyph, type GlyphReads
 
 export type SpotName = 'dots' | 'swaps' | 'next' | 'held'
 /** 기억한 모양: 어떤 숫자였고, 서로 다른 상황 몇 번에서 확인됐나 */
-export interface Known { f: number[]; digit: number; ctx: string[] }
+export interface Known { f: number[]; digit: number; ctx: string[]; art?: string }
 export type Memory = Record<SpotName, Known[]>
 export const emptyMemory = (): Memory => ({ dots: [], swaps: [], next: [], held: [] })
 
@@ -45,6 +45,8 @@ export class ScreenCounts {
   private slots: Record<SpotName, Slot> = { dots: { cur: null, n: 0, none: 0 }, swaps: { cur: null, n: 0, none: 0 }, next: { cur: null, n: 0, none: 0 }, held: { cur: null, n: 0, none: 0 } }
   /** 마지막으로 풀어 본 모양 조합 (같은 조합을 프레임마다 다시 풀지 않는다) */
   private solved: { dots: Glyph | null; swaps: Glyph | null; held: Glyph | null; ok: boolean } = { dots: null, swaps: null, held: null, ok: false }
+  /** 마지막으로 값을 받아들였을 때의 버튼 모양 */
+  private accepted: { dots: Glyph | null; swaps: Glyph | null } = { dots: null, swaps: null }
   private nextGlyph: Glyph | null = null
   private nextOk = false
   private occasion = 0
@@ -56,6 +58,7 @@ export class ScreenCounts {
     for (const s of Object.values(this.slots)) { s.cur = null; s.n = 0; s.none = 0 }
     this.solved = { dots: null, swaps: null, held: null, ok: false }
     this.nextGlyph = null
+    this.accepted = { dots: null, swaps: null }
     this.nextOk = false
     this.dots = this.swaps = this.next = null
     this.unsure = this.countsFresh = this.nextFresh = false
@@ -113,8 +116,20 @@ export class ScreenCounts {
     return ev
   }
 
+  /** 지금 보고 있는 모양과 기억한 모양을 글로 (기록 복사에 붙여서, 개수가 안 맞을 때 원인을 찾는다) */
+  diagnose(): string {
+    const now = (['dots', 'swaps', 'held', 'next'] as const).map((k) => {
+      const s = this.slots[k]
+      if (!s.cur) return `${k}: 안 보임(${s.none}프레임)`
+      const b = this.belief(k, s.cur)
+      return `${k}: 짐작 ${s.cur.guess} · 믿음 ${b.v}(${b.trust}) · ${s.n}프레임 · ${s.cur.art}`
+    })
+    const mem = (Object.keys(this.memory) as SpotName[]).flatMap((k) => this.memory[k].map((e) => `${k} ${e.digit} [${e.ctx.join(',')}] ${e.art ?? ''}`))
+    return [`정한 값: 점 찍기 ${this.dots} · 바꿔 뽑기 ${this.swaps} · 다음 ${this.next} · ${this.unsure ? '못 정함' : '정함'}`, ...now, '기억한 모양:', ...mem].join('\n')
+  }
+
   /** 버튼 두 숫자와 보유 숫자를 맞춰 개수를 정한다. 정했으면 true */
-  private solve(dg: Glyph, sg: Glyph, hg: Glyph | null, ev: CountEvent[]): boolean {
+  private solve(dg: Glyph, sg: Glyph, hg: Glyph | null, ev: CountEvent[], retry = true): boolean {
     const D = this.belief('dots', dg), S = this.belief('swaps', sg)
     const H = hg ? this.belief('held', hg) : null
     const mark = (b: Belief) => `${b.v}${'??! '[b.trust]}`.trim()
@@ -123,7 +138,7 @@ export class ScreenCounts {
     if (!H) {
       // 보유 칸이 안 보이면 검산을 못 한다. 이미 확인된 모양이거나, 직전 값에서 하나 차이인 짐작만 받는다
       const ok = (b: Belief, prev: number | null) => b.trust >= 2 || (b.trust >= 1 && prev !== null && Math.abs(b.v - prev) <= 1)
-      if (ok(D, this.dots) && ok(S, this.swaps) && D.v + S.v <= 7) return this.accept(D.v, S.v)
+      if (ok(D, this.dots) && ok(S, this.swaps) && D.v + S.v <= 7) return this.accept(D.v, S.v, dg, sg)
       ev.push({ what: '화면 숫자 못 정함', detail: `${say()} · ${dg.art} · ${sg.art}` })
       return false
     }
@@ -132,27 +147,34 @@ export class ScreenCounts {
       this.learn('dots', dg, D.v, ctx)
       this.learn('swaps', sg, S.v, ctx)
       if (hg !== FULL) this.learn('held', hg!, H.v, ctx)
-      return this.accept(D.v, S.v)
+      return this.accept(D.v, S.v, dg, sg)
     }
     // 합이 안 맞는다: 셋 중 하나를 잘못 읽었다
     if (D.trust === 3 && S.trust === 3 && H.trust === 3) {
       // 확실하다고 기억한 것끼리 안 맞는다 → 기억이 틀렸다. 지우고 다음에 다시 배운다
       this.forget('dots', dg); this.forget('swaps', sg); if (hg !== FULL) this.forget('held', hg!)
       ev.push({ what: '화면 숫자 안 맞음', detail: `${say()} · 기억한 모양을 지움` })
-      return false
+      // 기억 없이 다시 푼다 (전에는 여기서 멈춰서, 화면이 바뀔 때까지 틀린 값에 머물렀다)
+      return retry ? this.solve(dg, sg, hg, ev, false) : false
     }
     // '누가 틀렸나'를 가정별로 따진다. 말이 안 되는 가정(음수, 합이 7 초과, 확실한 걸 틀렸다고 하는 것)은 버리고,
-    // 덜 믿는 쪽이 틀렸다는 가정 → 직전 값에서 덜 벗어나는 가정 순으로 고른다. 그래도 못 가르면 정하지 않는다
+    // 덜 믿는 쪽이 틀렸다는 가정 → 모양이 바뀐 버튼만 값이 바뀌는 가정 → 직전 값에서 덜 벗어나는 가정 순으로 고른다. 그래도 못 가르면 정하지 않는다
     const jump = (d: number, s: number) => (this.dots === null || this.swaps === null ? 0 : Math.abs(d - this.dots) + Math.abs(s - this.swaps))
+    // 마지막으로 받아들인 뒤 모양이 그대로인 버튼은 값도 그대로고, 모양이 바뀐 버튼은 값도 바뀌었다. 어긋나는 가정은 덜 믿는다
+    const odd = (k: 'dots' | 'swaps', g: Glyph, v: number) => {
+      const a = this.accepted[k]
+      if (!a || this[k] === null) return 0
+      return (dist(a.f, g.f) < SAME) === (v === this[k]) ? 0 : 1
+    }
     const hyps = [
       { who: 'held' as const, d: D.v, s: S.v, t: H.trust },
       { who: 'dots' as const, d: H.v - S.v, s: S.v, t: D.trust },
       { who: 'swaps' as const, d: D.v, s: H.v - D.v, t: S.trust },
     ].filter((x) => x.t < 3 && x.d >= 0 && x.s >= 0 && x.d + x.s <= 7)
-      .map((x) => ({ ...x, jump: jump(x.d, x.s) }))
-      .sort((a, b) => a.t - b.t || a.jump - b.jump)
+      .map((x) => ({ ...x, odd: odd('dots', dg, x.d) + odd('swaps', sg, x.s), jump: jump(x.d, x.s) }))
+      .sort((a, b) => a.t - b.t || a.odd - b.odd || a.jump - b.jump)
     const best = hyps[0], second = hyps[1]
-    if (best && (!second || best.t < second.t || best.jump < second.jump)) {
+    if (best && (!second || best.t < second.t || best.odd < second.odd || best.jump < second.jump)) {
       if (best.who === 'held') {
         if (hg !== FULL) this.learn('held', hg!, best.d + best.s, `${best.d}+${best.s}`)
       } else {
@@ -160,15 +182,16 @@ export class ScreenCounts {
         ev.push({ what: '합으로 알아냄', detail: `${best.who === 'dots' ? '점 찍기' : '바꿔 뽑기'} ${v} (짐작은 ${(best.who === 'dots' ? D : S).v}) · ${say()} · ${g.art}` })
         this.learn(best.who, g, v, `=${H.v}-${best.who === 'dots' ? S.v : D.v}`)
       }
-      return this.accept(best.d, best.s)
+      return this.accept(best.d, best.s, dg, sg)
     }
     ev.push({ what: '화면 숫자 못 정함', detail: `${say()} · ${dg.art} · ${sg.art}${hg !== FULL ? ' · ' + hg!.art : ''}` })
     return false
   }
 
-  private accept(d: number, s: number) {
+  private accept(d: number, s: number, dg: Glyph, sg: Glyph) {
     this.dots = d
     this.swaps = s
+    this.accepted = { dots: dg, swaps: sg }
     return true
   }
 
@@ -192,7 +215,7 @@ export class ScreenCounts {
       else if (!k.ctx.includes(ctx) && k.ctx.length < 3) k.ctx.push(ctx)
       else return
     } else {
-      list.push({ f: g.f, digit, ctx: [ctx] })
+      list.push({ f: g.f, digit, ctx: [ctx], art: g.art })
       if (list.length > 40) list.shift()
     }
     this.onLearn?.(this.memory)

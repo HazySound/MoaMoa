@@ -94,8 +94,29 @@ describe('화면 숫자로 개수 정하기', () => {
     sc.memory.held.push({ f: gl(6).f, digit: 6, ctx: ['a', 'b'] })
     const ev = feed(sc, reads(gl(4), gl(2), gl(6)))
     expect(ev.map((e) => e.what)).toEqual(['화면 숫자 안 맞음'])
-    expect(sc.unsure).toBe(true)
-    expect(sc.memory.dots.length).toBe(0)
+    // 틀린 기억을 지우고 그 자리에서 다시 풀어, 구조 짐작(4) + 2 = 6으로 맞춘다
+    expect([sc.dots, sc.swaps, sc.unsure]).toEqual([4, 2, false])
+    expect(sc.memory.dots.map((e) => e.digit)).toEqual([4])
+  })
+
+  test('꽉 찼는데 기억한 모양끼리 합이 6이면, 틀린 기억을 지우고 바로 다시 풀어 7로 맞춘다 (꽉 참인데 6개로 멈추던 문제)', () => {
+    const sc = new ScreenCounts()
+    // 버튼의 4 모양을 3으로 잘못 기억하고 있다 (확실하다고까지 믿는다)
+    sc.memory.dots.push({ f: gl(4).f, digit: 3, ctx: ['a', 'b'] })
+    sc.memory.swaps.push({ f: gl(3).f, digit: 3, ctx: ['a', 'b'] })
+    const ev = feed(sc, reads(gl(4), gl(3), null), true)
+    expect(ev.map((e) => e.what)).toEqual(['화면 숫자 안 맞음'])
+    expect([sc.dots, sc.swaps, sc.unsure]).toEqual([4, 3, false])
+  })
+
+  test('꽉 찼는데 어느 버튼이 틀렸는지 동점이면, 모양이 바뀐 버튼의 값이 바뀐 것으로 본다', () => {
+    const sc = new ScreenCounts()
+    feed(sc, reads(gl(3), gl(3), gl(6)))
+    expect([sc.dots, sc.swaps]).toEqual([3, 3])
+    // 버튼의 4 모양을 3으로 한 번 잘못 배운 적이 있다. 점 찍기를 얻어 4 + 3 = 7(꽉 참)이 됐다
+    sc.memory.dots.push({ f: gl(4).f, digit: 3, ctx: ['a'] })
+    feed(sc, reads(gl(4), gl(3), null), true)
+    expect([sc.dots, sc.swaps, sc.unsure]).toEqual([4, 3, false])
   })
 
   test('다음 능력: 흐름(7 → 6 → … → 1 → 7)에 맞으면 처음 보는 모양도 받고 배운다', () => {

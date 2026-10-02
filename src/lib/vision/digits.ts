@@ -181,7 +181,8 @@ export function guessDigit(pt: Patch): number {
   const middle = bar(0.25, 0.8) >= 0.7
   if (!bottom) return middle ? 4 : 7
   if (side(false, 0.6, 0.85) < 0.75) return 2
-  if (side(true, 0.5, 0.75) >= 0.75) return middle ? 6 : 0
+  // 0은 가운데 줄이 없고 오른쪽 위 세로획이 있다. 둘 중 하나라도 어긋나면 6이다 (가운데 줄이 둥글어 짧게 잡혀도 6으로 본다)
+  if (side(true, 0.5, 0.75) >= 0.75) return middle || side(false, 0.15, 0.4) < 0.75 ? 6 : 0
   // 5는 위쪽 세로획이 왼쪽에만 있다. 3은 오른쪽에 있다 (왼쪽 위 갈고리가 번져 보여도 3이다)
   return side(true, 0.15, 0.4) >= 0.75 && side(false, 0.15, 0.4) < 0.75 ? 5 : 3
 }

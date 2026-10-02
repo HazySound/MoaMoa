@@ -42,6 +42,8 @@
     const text = [...engine.events].reverse()
       .map((e) => `${new Date(e.t).toLocaleTimeString('ko-KR', { hour12: false })} ${e.what} ${e.detail}`)
       .join('\n')
+      // 지금 화면 숫자를 어떻게 읽고 있는지도 붙인다 (숫자 모양·기억한 모양까지 있어야 원인을 찾는다)
+      + `\n--- 지금 화면 숫자 ---\n${engine.diagnostics()}\n버전 ${__BUILD__}`
     try {
       await navigator.clipboard.writeText(text)
       eventsCopied = true
@@ -445,7 +447,7 @@
               {/if}
               <div class="mt-3 flex gap-2">
                 <button class="btn ghost sm" onclick={() => engine.resolve()}><IconRefresh class="size-3.5" />다시 계산</button>
-                <button class="btn ghost sm" onclick={copyEvents} disabled={!engine.events.length}>{#if eventsCopied}<IconCheck class="size-3.5" />복사했어요{:else}<IconCopy class="size-3.5" />기록 복사{/if}</button>
+                <button class="btn ghost sm" onclick={copyEvents}>{#if eventsCopied}<IconCheck class="size-3.5" />복사했어요{:else}<IconCopy class="size-3.5" />기록 복사{/if}</button>
               </div>
             </div>
           {/if}

@@ -358,6 +358,7 @@ class Engine {
 
   /** 화면 숫자로 개수를 맞춘다. full: 보유 칸이 '능력이 가득 찼습니다'로 바뀌어 있다 */
   private syncNumbers(r: GlyphReads, full: boolean, live: boolean) {
+    this.lastWhy = r.why
     for (const e of this.screen.feed(r, full, live ? 3 : 1)) {
       // 같은 화면이 깜빡일 때마다 같은 말을 되풀이하지 않는다
       const key = e.what + e.detail
@@ -398,6 +399,17 @@ class Engine {
     }
   }
   private lastScreenEvent = ''
+  private lastWhy: Record<string, string> = {}
+
+  /** 지금 화면 숫자를 어떻게 읽고 있는지 (기록 복사에 붙는다. 개수가 안 맞을 때 이걸로 원인을 찾는다) */
+  diagnostics(): string {
+    const why = Object.entries(this.lastWhy).map(([k, v]) => k + ': ' + v).join(' · ')
+    return [
+      `도우미: 점 찍기 ${this.dots} · 바꿔 뽑기 ${this.swaps} · 다음 ${this.nextAbility} · 꽉 참 ${this.gameFull} · 화면 숫자 ${this.numsSeen ? '읽는 중' : '아직 못 읽음'}`,
+      `판 칸 크기 ${this.grid?.pitch.toFixed(2) ?? '?'}${why ? ' · 못 잡은 자리 ' + why : ''}`,
+      this.screen.diagnose(),
+    ].join('\n')
+  }
   private numsFreshAt = 0
   private numsStaleLogged = false
 
