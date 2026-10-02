@@ -497,6 +497,25 @@ describe('능력 개수는 게임 화면 숫자가 기준', () => {
     expect([engine.dots, engine.swaps]).toEqual([1, 6])
   })
 
+  test('세트 중간에 능력을 얻어 6개 이상이 되면, 남은 조각으로 다시 계산해 능력을 쓸지 본다', async () => {
+    await setup()
+    nums(3, 2, 5, 5)
+    await flush()
+    engine.events = []
+    nums(3, 3, 5, 6) // 줄을 지워 바꿔 뽑기를 얻었다 → 보유 6
+    await flush()
+    expect(engine.events.some((e: any) => (e.what === '계산' || e.what === '저장된 계산 사용') && e.detail === '능력이 늘어서')).toBe(true)
+  })
+
+  test('처음 화면 숫자에 맞출 때 값이 커지는 건 능력을 얻은 게 아니라서 다시 계산하지 않는다', async () => {
+    await setup()
+    engine.dots = 0
+    engine.swaps = 0
+    nums(4, 2, 5, 6)
+    await flush()
+    expect(engine.events.some((e: any) => e.detail === '능력이 늘어서')).toBe(false)
+  })
+
   test('다음 능력이 1 → 7이 되면 새 아이콘 차례다', async () => {
     await setup()
     nums(3, 2, 1, 5)
@@ -570,6 +589,35 @@ describe('원래 판에 있던 아이콘 (새로고침·화면 공유 다시 시
 })
 
 describe('아이콘 칸 기억이 틀렸을 때', () => {
+  test('실제 캡처(템블록오류): 블록 위 아이템 칸을 빈칸으로 잘못 기억하고 있으면 블록으로 바로잡는다', async () => {
+    engine.reset()
+    feed('icon-on-block.png', 3)
+    await flush()
+    // ↓11 →3: 점 찍기 아이템이 블록 위에 있다. 처음 맞출 때는 화면에서 읽은 대로 블록이다
+    expect((engine.board[10] >> 2) & 1).toBe(1)
+    expect(engine.icons).toContainEqual({ r: 10, c: 2, kind: 'dot' })
+    // 기억이 빈칸으로 틀어졌다 (사용자가 보낸 화면: 도우미가 그 칸에 조각을 놓으라고 추천했다)
+    const wrong = engine.board.slice()
+    wrong[10] &= ~(1 << 2)
+    engine.board = wrong
+    engine.events = []
+    feed('icon-on-block.png', 12)
+    await flush()
+    expect((engine.board[10] >> 2) & 1).toBe(1)
+    expect(engine.events.some((e: any) => e.what === '아이콘 칸 바로잡음' && e.detail.includes('빈칸 → 블록'))).toBe(true)
+  })
+
+  test('화면 기준으로 다시 맞출 때 아이템 칸은 기억이 아니라 화면에서 읽은 대로 둔다', async () => {
+    engine.reset()
+    feed('icon-on-block.png', 3)
+    await flush()
+    const wrong = engine.board.slice()
+    wrong[10] &= ~(1 << 2)
+    engine.board = wrong
+    engine.resync(wrong, engine.hand.map((h: any) => ({ state: h.state === 'piece' ? 'piece' : 'used', selected: false, shape: h.shape })))
+    expect((engine.board[10] >> 2) & 1).toBe(1)
+  })
+
   test('빈칸 위 아이콘을 블록으로 기억하고 있으면, 밑이 계속 빈칸으로 읽힐 때 바로잡는다', async () => {
     const { parseBoard } = await import('../src/lib/core/board')
     engine.reset()

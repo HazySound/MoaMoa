@@ -12,7 +12,7 @@ import { ABILITY_SCORE, canPlace, place, popcount, boardKey, canonicalKey, COLS,
 import { explainMove, type Move } from './core/track'
 import { identify, stageOf, type PieceDef } from './core/pieces'
 import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
-import type { Plan, Rescue, Step } from './core/solver'
+import { ADV, type Plan, type Rescue, type Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, isFilledState, isIconState, readAbilityFull, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
 import { readGlyphs, type GlyphReads } from './vision/digits'
@@ -226,7 +226,9 @@ class Engine {
     this.updatedAt = 0
     this.iconTrack.clear()
     this.lingering.clear()
+    this.lastIconRead = { mask: new Array(ROWS).fill(0), filled: new Array(ROWS).fill(0) }
     this.numsSeen = false
+    this.numsSettled = false
     this.nextAt = 0
     this.screen.reset()
     this.adoptFrames = 0
@@ -301,8 +303,10 @@ class Engine {
     // 커서·못 읽은 칸은 직전 값을 쓰고 '모름'으로 표시해 둔다. 판 변화를 풀 때 그 칸은 어느 쪽이든 맞는 것으로 본다
     const B = new Array<number>(ROWS).fill(0)
     const unsure = new Array<number>(ROWS).fill(0)
+    const iconMask = new Array<number>(ROWS).fill(0), iconFilled = new Array<number>(ROWS).fill(0)
     br.cells.forEach((st, i) => {
       const r = Math.floor(i / COLS), c = i % COLS
+      if (isIconState(st)) { iconMask[r] |= 1 << c; if (isFilledState(st)) iconFilled[r] |= 1 << c }
       // 아이콘 칸도 '모름'이다. 아이콘이 반짝이면 밑이 블록인지 빈칸인지 프레임마다 다르게 읽힌다.
       // 그 칸이 바뀌는 건 조각을 놓거나 줄이 지워질 때뿐이고, 그때는 다른 칸도 함께 바뀌어서 그걸로 안다
       // 배치 미리보기·줄 강조 칸도 '모름'이다. 그동안에도 아이콘은 계속 따라간다
@@ -312,6 +316,7 @@ class Engine {
         if (known) B[r] |= 1 << c
       } else if (isFilledState(st)) B[r] |= 1 << c
     })
+    this.lastIconRead = { mask: iconMask, filled: iconFilled }
     this.trackIcons(br.cells, B, live ? 2 : 1)
     this.lastUnsure = unsure
     // 능력 숫자는 판 미리보기와 상관없는 자리라 매 프레임 읽는다
@@ -369,15 +374,21 @@ class Engine {
     const sc = this.screen
     if (sc.countsFresh) {
       if (!this.numsSeen) { this.numsSeen = true; this.log('화면 숫자 읽기 시작', `◎${sc.dots} ⇄${sc.swaps}`) }
+      let gained = false
       for (const k of ['dots', 'swaps'] as const) {
         const v = sc[k]!
         if (v === this[k]) continue
+        if (v > this[k]) gained = true
         // 판·카드로 아직 못 본 사용이면 기억해 둔다. 곧 그 배치(점 찍기)·카드 변화(바꿔 뽑기)를 받아들이는 근거가 된다
         if (v < this[k] && now - this.usedAt[k] > 3000) this.drops[k] = now
         this.log('화면 숫자', `${k === 'dots' ? '점 찍기' : '바꿔 뽑기'} ${this[k]} → ${v}`)
         this[k] = v
       }
       this.abilityUnsure = false
+      // 추천은 세트가 나올 때 한 번 계산하고, 능력 쓰기 안내도 그때만 계산됐다. 세트 중간에 능력을 얻어 6개 이상이 되면
+      // (7개면 더 못 얻는다) 남은 조각으로 다시 계산해서 지금 털지 본다. 전에는 세 조각을 다 놓을 때까지 대응이 없었다
+      if (gained && this.numsSettled && this.held >= ADV.cap && this.hand.some((h) => h.state === 'piece')) this.requestSolve('능력이 늘어서')
+      this.numsSettled = true
     } else if (this.numsSeen && sc.unsure) this.abilityUnsure = true
     // 숫자가 한참 안 읽히면 까닭을 한 번 남긴다 (기록을 받아 보면 무엇이 문제인지 알 수 있게)
     if (sc.countsFresh) { this.numsFreshAt = now; this.numsStaleLogged = false }
@@ -399,6 +410,8 @@ class Engine {
     }
   }
   private lastScreenEvent = ''
+  /** 화면 숫자로 개수를 한 번 맞춘 뒤다 (처음 맞출 때 값이 커지는 건 능력을 얻은 게 아니다) */
+  private numsSettled = false
   private lastWhy: Record<string, string> = {}
 
   /** 지금 화면 숫자를 어떻게 읽고 있는지 (기록 복사에 붙는다. 개수가 안 맞을 때 이걸로 원인을 찾는다) */
@@ -575,6 +588,9 @@ class Engine {
   /** 바꿔 뽑기 고르는 화면(보라 카드)을 마지막으로 본 때. 이걸 본 뒤에만 카드가 바뀐 걸 바꿔 뽑기로 센다 */
   private swapModeAt = 0
 
+  /** 마지막 프레임의 아이콘 칸과, 그 밑이 블록으로 읽힌 칸 (줄별 비트) */
+  private lastIconRead: { mask: Board; filled: Board } = { mask: new Array(ROWS).fill(0), filled: new Array(ROWS).fill(0) }
+
   /** 마지막 프레임에서 못 읽은 칸 (아이콘·커서 밑) */
   private lastUnsure: Board = new Array(ROWS).fill(0)
 
@@ -636,6 +652,10 @@ class Engine {
 
   /** 화면에 보이는 대로 처음부터 다시 맞춘다. keepCounts: 놓친 배치가 없다고 확신할 때 (카드가 그대로) */
   private resync(B: Board, cards: CardRead[], keepCounts = false) {
+    // 기억을 버리고 화면을 믿는 자리다. 아이콘 칸도 기억 대신 지금 화면에서 읽은 대로(블록 위인지 빈칸 위인지) 둔다
+    const ir = this.lastIconRead
+    B = B.map((row, r) => (row & ~ir.mask[r]) | ir.filled[r])
+    for (const t of this.iconTrack.values()) t.under = 0
     // 판이 텅 비고 카드 세 장이 다 새것이면 새 게임이다. 줄 수(=단계)와 능력을 처음부터 센다
     const fresh = B.every((row) => row === 0) && cards.every((c) => c.state === 'piece')
     if (!fresh && this.updatedAt && !keepCounts) {
@@ -856,14 +876,14 @@ class Engine {
   private checkUnder(t: { under: number }, i: number, vote: number) {
     if (!this.updatedAt) return
     t.under = Math.max(-30, Math.min(30, t.under + vote))
-    if (Math.abs(t.under) < 20) return
     const r = Math.floor(i / COLS), c = i % COLS
     const mem = (this.board[r] >> c) & 1
-    const seen = t.under > 0 ? 1 : 0
+    // 블록으로 고치는 쪽은 빨리(약 1.5초), 빈칸으로 고치는 쪽은 천천히(약 4초 내내 빈칸으로 읽힐 때) 한다.
+    // 막힌 칸을 뚫렸다고 알면 못 놓는 자리를 추천하지만, 뚫린 칸을 막혔다고 알면 그 칸을 피할 뿐이라 덜 해롭다.
+    // 한때 블록 → 빈칸만 고쳤는데, 빈칸이라고 잘못 안 뒤 되돌릴 길이 없어 막힌 칸에 놓으라고 추천했다 (캡처 icon-on-block)
+    const seen = t.under >= 10 ? 1 : t.under <= -30 ? 0 : -1
+    if (seen < 0 || mem === seen) return
     t.under = 0
-    // 블록 → 빈칸만 고친다. 블록은 조각을 놓아야만 생기고 그건 배치로 따라가므로, '빈칸 → 블록'으로 고칠 일은
-    // 잘못 받은 아이콘(커서) 밑을 오독한 경우뿐이었다 (기록: ↓1 →5 빈칸→블록→빈칸 오락가락)
-    if (mem === seen || seen === 1) return
     const B = this.board.slice()
     B[r] ^= 1 << c
     this.board = B
