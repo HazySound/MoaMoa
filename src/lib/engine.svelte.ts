@@ -458,7 +458,10 @@ class Engine {
       if (mv.slot < 0) g.dotsUsed++
       else g.pieces++
     })
-    if (mv.slot >= 0 && this.nextAbility !== null) this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
+    if (mv.slot >= 0) {
+      this.lastPlacedAt = Date.now()
+      if (this.nextAbility !== null) this.nextAbility = this.nextAbility <= 1 ? 7 : this.nextAbility - 1
+    }
     this.board = B
     this.updatedAt = Date.now()
     if (mv.slot < 0) {
@@ -494,6 +497,11 @@ class Engine {
   private iconTrack = new Map<number, { kind: Icon['kind']; seen: number; miss: number }>()
 
   private iconNeed = 2
+  /**
+   * 아이콘은 그 줄이 지워질 때(applyMove)나 판에 넷째가 생겨 가장 오래된 것이 밀려날 때만 없어진다.
+   * 반짝여서 잠깐 안 보이는 건 사라진 게 아니다. 처음 보는 아이콘은 연달아 need번 보여야 인정하고,
+   * 인정한 아이콘이 아주 오래(약 5초) 빈칸으로만 읽히면 그때서야 잘못 본 것으로 치고 지운다.
+   */
   private trackIcons(cells: CellState[], B: Board, need: number) {
     this.iconNeed = need
     let changed = false
@@ -502,25 +510,42 @@ class Engine {
       const t = this.iconTrack.get(i)
       if (isIconState(st)) {
         const kind: Icon['kind'] = st.startsWith('icon-dot') ? 'dot' : 'swap'
-        if (!t) { this.iconTrack.set(i, { kind, seen: 1, miss: 0 }); if (need === 1) changed = true; return }
-        if (++t.seen === need) {
-          changed = true
-          // 새 아이콘이 생겼다 = 방금 7번째 배치였다. 세던 값이 어긋났으면 여기서 맞춘다
-          if (this.updatedAt && this.nextAbility !== 7) {
-            if (this.nextAbility !== null) this.log('능력 카운트 보정', `${this.nextAbility} → 7`)
-            this.nextAbility = 7
-          }
+        if (!t) {
+          this.iconTrack.set(i, { kind, seen: 1, miss: 0 })
+          if (need === 1) { changed = true; this.onNewIcon() }
+          return
         }
         t.miss = 0
+        if (t.seen < need && ++t.seen === need) { changed = true; this.onNewIcon() }
         if (t.kind !== kind) { t.kind = kind; changed = true }
-      } else if (t && st !== 'cursor' && st !== 'unknown' && !((B[r] >> c) & 1)) {
-        if (++t.miss > 12) {
+      } else if (t) {
+        if (t.seen < need) { this.iconTrack.delete(i); return } // 한 번 보이고 만 것은 잘못 본 것
+        if (st === 'empty' && !((B[r] >> c) & 1) && ++t.miss > 35) {
           this.iconTrack.delete(i)
-          if (t.seen >= need) changed = true
+          changed = true
+          this.log('아이콘 지움', `↓${r + 1} →${c + 1} 오래 안 보임`)
         }
       }
     })
+    // 판에는 아이콘이 셋까지만 있다. 넷째가 생기면 가장 먼저 생긴 것이 없어진다
+    const confirmed = [...this.iconTrack].filter(([, t]) => t.seen >= need)
+    if (confirmed.length > 3) {
+      for (const [i] of confirmed.slice(0, confirmed.length - 3)) this.iconTrack.delete(i)
+      changed = true
+    }
     if (changed) this.publishIcons()
+  }
+
+  /** 마지막으로 조각을 놓은 때. 새 아이콘은 놓은 직후에만 생긴다 */
+  private lastPlacedAt = 0
+
+  /** 새 아이콘이 생겼다 = 방금 7번째 배치였다. 놓은 직후일 때만 세던 값을 7로 맞춘다 */
+  private onNewIcon() {
+    if (!this.updatedAt || Date.now() - this.lastPlacedAt > 3000) return
+    if (this.nextAbility !== 7) {
+      if (this.nextAbility !== null) this.log('능력 카운트 보정', `${this.nextAbility} → 7`)
+      this.nextAbility = 7
+    }
   }
 
   private publishIcons() {

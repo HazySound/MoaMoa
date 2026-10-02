@@ -6,6 +6,7 @@
   import MiniShape from './MiniShape.svelte'
   import Thinking from './Thinking.svelte'
   import LiveBoard from './LiveBoard.svelte'
+  import PipControls from './PipControls.svelte'
   import IconRotate from '~icons/lucide/rotate-cw'
   import IconFlip from '~icons/lucide/flip-horizontal-2'
   import IconCheck from '~icons/lucide/check'
@@ -144,6 +145,8 @@
       {engine.live ? '보유 조각을 읽으면 추천이 떠요' : '원래 창에서 화면 공유를 시작해 주세요'}
     </div>
   {/if}
+
+  <PipControls />
 </div>
 
 <style>

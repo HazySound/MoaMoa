@@ -34,7 +34,7 @@ class Pip {
       engine.error = '이 브라우저는 작은 창(PiP)을 지원하지 않아요. Chrome이나 Edge 최신 버전에서 열어 주세요.'
       return
     }
-    const win = await api.requestWindow({ width: 340, height: 660 })
+    const win = await api.requestWindow({ width: 340, height: 720 })
     copyStyles(win.document)
     win.document.documentElement.lang = 'ko'
     win.document.title = '모아모아 도우미'
