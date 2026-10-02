@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // 서버 코드 없는 정적 사이트. 빌드한 dist를 그대로 올린다 (npm run deploy)
+  "name": "moamoa",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

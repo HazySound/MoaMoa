@@ -30,7 +30,7 @@ const PREFS_KEY = 'moamoa.prefs.v1'
 interface Prefs { style: number; swaps: number; dots: number; lines: number }
 
 function loadPrefs(): Prefs {
-  const d: Prefs = { style: 0.35, swaps: 0, dots: 0, lines: 0 }
+  const d: Prefs = { style: 0.2, swaps: 0, dots: 0, lines: 0 }
   try { return { ...d, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') } } catch { return d }
 }
 
@@ -52,7 +52,7 @@ class Engine {
   solving = $state(false)
   solveMs = $state(0)
 
-  style = $state(0.35)
+  style = $state(0.2)
   swaps = $state(0)
   dots = $state(0)
   lines = $state(0)

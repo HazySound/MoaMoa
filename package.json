@@ -10,7 +10,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "npm run build && wrangler pages deploy dist --project-name moamoa --branch main --commit-dirty=true"
+    "deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.138",

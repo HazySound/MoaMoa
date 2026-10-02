@@ -5,3 +5,11 @@ dist/
 .DS_Store
 # 원본 캡처는 test/fixtures에 필요한 것만 옮겨 둔다
 스크린샷/*.gif
+
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+
+# wrangler 로컬 상태
+.wrangler/
