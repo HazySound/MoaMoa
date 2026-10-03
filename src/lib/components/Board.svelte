@@ -55,9 +55,20 @@
 
   const iconAt = (r: number, c: number) => baseIcons.find((ic) => ic.r === r && ic.c === c)
   const cells = Array.from({ length: ROWS * COLS }, (_, i) => i)
+  // 점 찍기 칸은 게임 판에서 찾기 어렵다 (사용자: "도대체 어디에 찍으라는 거냐"). 그 행·열 전체를 밝히고 가장자리에 번호를 단다
+  const target = $derived(dot ?? (step && step.slot < 0 ? { r: step.r, c: step.c } : null))
+  const rowNums = Array.from({ length: ROWS }, (_, i) => i + 1)
+  const colNums = Array.from({ length: COLS }, (_, i) => i + 1)
 </script>
 
-<div class="board" style="--cols:{COLS};--rows:{ROWS}">
+<div class="frame" style="--cols:{COLS};--rows:{ROWS}">
+  <div class="axis cols">
+    {#each colNums as n (n)}<span class:hot={target && target.c === n - 1}>{n}</span>{/each}
+  </div>
+  <div class="axis rows">
+    {#each rowNums as n (n)}<span class:hot={target && target.r === n - 1}>{n}</span>{/each}
+  </div>
+<div class="board">
   {#each cells as i (i)}
     {@const r = Math.floor(i / COLS)}
     {@const c = i % COLS}
@@ -65,7 +76,7 @@
     {@const g = ghost.get(i)}
     {@const l = later.get(i)}
     {@const ic = iconAt(r, c)}
-    <div class="cell" class:filled class:clearing={clearing.has(r)}>
+    <div class="cell" class:filled class:clearing={clearing.has(r)} class:cross={target && (target.r === r || target.c === c)}>
       {#if ic && !filled}
         <span class="icon" class:dot={ic.kind === 'dot'}>
           {#if ic.kind === 'dot'}<IconDot />{:else}<IconSwap />{/if}
@@ -93,8 +104,25 @@
     </div>
   {/each}
 </div>
+</div>
 
 <style>
+  .frame {
+    display: grid;
+    grid-template-columns: 12px 1fr;
+    grid-template-rows: 12px 1fr;
+    width: 100%;
+  }
+  .axis {
+    display: grid;
+    font: 500 9px/1 var(--font-mono);
+    color: rgb(var(--fg) / 0.35);
+    user-select: none;
+  }
+  .axis.cols { grid-column: 2; grid-row: 1; grid-template-columns: repeat(var(--cols), 1fr); padding: 0 10px; text-align: center; align-items: end; }
+  .axis.rows { grid-column: 1; grid-row: 2; grid-template-rows: repeat(var(--rows), 1fr); padding: 10px 0; align-items: center; justify-items: end; padding-right: 2px; }
+  .axis .hot { color: #38bdf8; font-weight: 700; text-shadow: 0 0 6px rgb(56 189 248 / 0.8); }
+  .board { grid-column: 2; grid-row: 2; }
   .board {
     display: grid;
     grid-template-columns: repeat(var(--cols), 1fr);
@@ -121,6 +149,8 @@
     background: linear-gradient(160deg, var(--block-a), var(--block-b));
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), inset 0 -2px 0 rgb(0 0 0 / 0.18);
   }
+  .cell.cross { box-shadow: inset 0 0 0 1px rgb(56 189 248 / 0.45); }
+  .cell.cross:not(.filled) { background: rgb(56 189 248 / 0.1); }
   .cell.clearing::after {
     content: '';
     position: absolute;
