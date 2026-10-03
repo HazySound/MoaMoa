@@ -321,3 +321,25 @@ describe('5줄 더미를 만들 수 있으면 한 줄을 털지 않는다 (실�
     expect(multiPotential(plan.board, inp.weights, Math.max(0, 3 - dotsUsed))).toBeGreaterThan(3000)
   }, 60_000)
 })
+
+describe('위기용 점 찍기도 이득이 확실하면 쓴다 (실제 화면 로직.png 넷째)', () => {
+  // 5~12행이 10열만 비었고 5행은 2열도 비었다. 점 찍기 2개뿐이라 전에는 위기용으로 남겨 두느라 못 썼는데,
+  // (5,2)에 하나 찍으면 ㅡ가 2줄에서 3줄이 돼 1,500점이 더 난다 (사용자 지적)
+  test('점 찍기 (5,2) → ㅣ 5줄 → ㅡ 3줄 순서를 찾는다', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { PNG } = await import('pngjs')
+    const { detectGrid, readBoard, readCards } = await import('../src/lib/vision/read')
+    const { blendedWeights } = await import('../src/lib/core/stats')
+    const img = PNG.sync.read(readFileSync('test/fixtures/order35.png')) as any
+    const g = detectGrid(img)!
+    const br = readBoard(img, g)
+    const hand = readCards(img, g).map((c) => (c.state === 'piece' ? c.shape : null))
+    const counts = JSON.parse(readFileSync('docs/data/piece-stats-2026-10-03.json', 'utf8')).counts
+    const inp = { board: br.board, icons: br.icons, hand, heldAbilities: 3, swaps: 1, dots: 2, weights: blendedWeights(counts, 4), style: 0.75, beam: 160 }
+    const plan = solve(inp, 1)[0]
+    const lines = plan.steps.map((s) => s.cleared.length).sort((a, b) => b - a)
+    expect(lines.slice(0, 2)).toEqual([5, 3])
+    expect(plan.steps.filter((s) => s.slot < 0).length).toBe(1)
+    expect(plan.gained).toBeGreaterThan(10000)
+  }, 60_000)
+})

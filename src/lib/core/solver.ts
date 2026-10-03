@@ -85,6 +85,8 @@ interface State {
   quick: number
   /** 이 계획에서 쓴 점 찍기 수 */
   dotsUsed: number
+  /** 쓴 점 찍기의 비용 합 (위기용 여분에 손대면 비싸다) */
+  dotCost: number
 }
 
 /** slot -1이면 점 찍기 */
@@ -338,11 +340,13 @@ function finalEval(st: State, inp: SolveInput, remaining: number): { value: numb
 function searchPlans(inp: SolveInput, topN: number): Plan[] {
   const slots = inp.hand.map((s, i) => [i, s] as const).filter((x): x is readonly [number, Shape] => x[1] !== null)
   const orients = new Map(slots.map(([i, s]) => [i, orientations(s)]))
-  const start: State = { board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0, dotsUsed: 0 }
+  const start: State = { board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0, dotsUsed: 0, dotCost: 0 }
   const allUsed = slots.reduce((m, [i]) => m | (1 << i), 0)
   // 점 찍기를 넉넉히 들고 있으면(위기용 keepDots개는 남기고) 계획 안에 점 찍기 단계를 넣는다.
   // 전에는 능력을 '막혔을 때 살리기'로만 써서, 점 찍기 5개를 쥐고도 두 칸 메워 큰 제거 자리를 만드는 수를 못 봤다 (2026-10-03 사용자 지적)
-  const dotBudget = ADV.planDots ? Math.max(0, Math.min(ADV.planDotsMax, (inp.dots ?? 0) - ADV.keepDots)) : 0
+  // 위기용 여분(keepDots)까지 다 후보에 넣되, 여분에 손대는 점 찍기는 비용을 높게 매긴다 (dotStepCost).
+  // 전에는 여분은 아예 안 썼는데, 점 찍기 하나로 ㅡ가 2줄에서 3줄이 되는(+1,500) 판에서도 못 썼다 (2026-10-03 사용자 지적)
+  const dotBudget = ADV.planDots ? Math.max(0, Math.min(ADV.planDotsMax, inp.dots ?? 0)) : 0
   const dotOrient = { shape: DOT_SHAPE, flip: false, rot: 0 }
 
   let beam: State[] = [start]
@@ -386,7 +390,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
       }
       if (st.dotsUsed < dotBudget) {
         // 점 찍기는 거의 찬 줄(채움 ≥ planDotRowMin)의 빈칸에만 (그 밖은 조각으로 메우는 게 낫다). 쓴 점 찍기마다 비용을 뺀다
-        const cost = ADV.planDotCost
+        const cost = dotStepCost(inp, st.dotsUsed)
         for (let r = 0; r < ROWS; r++) {
           if (popcount(st.board[r]) < ADV.planDotRowMin) continue
           for (let c = 0; c < COLS; c++) if (!((st.board[r] >> c) & 1)) tryPlace(-1, DOT_SHAPE, 0, r, c, cost)
@@ -402,7 +406,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
     const prelim = [...best.values()].sort((a, b) => b.quick - a.quick).slice(0, W.potential ? width * 2 : width)
     const children = prelim.map((cd) => {
       const o = cd.slot < 0 ? dotOrient : orients.get(cd.slot)![cd.oi]
-      const child = expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp.style)
+      const child = expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp)
       if (W.potential) child.quick += W.potential * scoreMul(inp.style) * multiPotential(child.board, inp.weights, spareDotsAfter(inp, child.dotsUsed))
       return child
     })
@@ -436,7 +440,8 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
   return out
 }
 
-function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r: number, c: number, style: number): State {
+function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r: number, c: number, inp: SolveInput): State {
+  const style = inp.style
   const board = st.board.slice()
   const cleared: number[] = []
   for (let i = 0; i < s.h; i++) {
@@ -461,10 +466,10 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   const abilityBonus = got * abilityWorth(st.held)
   const acc = st.steps.reduce((a, x) => a + x.abilities, 0) * abilityWorth(st.held)
   const dotsUsed = st.dotsUsed + (slot < 0 ? 1 : 0)
-  // 쓴 점 찍기의 비용
-  const dotCost = ADV.planDotCost * dotsUsed
+  // 쓴 점 찍기의 비용 합
+  const dotCost = st.dotCost + (slot < 0 ? dotStepCost(inp, st.dotsUsed) : 0)
   return {
-    board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed,
+    board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed, dotCost,
     steps: [...st.steps, step],
     quick: total + acc + abilityBonus + quickEval(board, style) - dotCost - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
   }
@@ -519,6 +524,12 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
 
 /** 판 위에서 세 조각을 작은 빔으로 놓아 본다. 다 못 놓으면 null */
 /** 계획에서 점 찍기를 dotsUsed개 쓴 뒤에도 남는, 판 짜기에 쓸 수 있는 점 찍기 수 (위기용 keepDots개는 뺀다) */
+/** 계획에서 dotsUsed개를 쓴 뒤 하나 더 쓰는 비용. 남는 게 위기용 여분(keepDots)뿐이면 능력 하나의 위기 값어치(900)로 친다 */
+function dotStepCost(inp: SolveInput, dotsUsed: number): number {
+  const remain = (inp.dots ?? 0) - dotsUsed - 1
+  return remain < ADV.keepDots ? abilityWorth(0) : ADV.planDotCost
+}
+
 function spareDotsAfter(inp: SolveInput, dotsUsed: number): number {
   return ADV.dotFill ? Math.max(0, Math.min(ADV.planDotsMax, (inp.dots ?? 0) - dotsUsed - ADV.keepDots)) : 0
 }
