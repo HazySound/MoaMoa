@@ -173,6 +173,9 @@
       <IconAlert class="size-4 shrink-0" />{engine.error}
     </div>
   {/if}
+  {#each engine.notices as n (n.t)}
+    <div class="mb-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm text-amber-200" transition:slide>{n.text}</div>
+  {/each}
 
   {#if !hasData}
     <!-- 처음 화면 -->

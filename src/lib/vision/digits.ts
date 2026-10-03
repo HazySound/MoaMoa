@@ -178,13 +178,69 @@ export function guessDigit(pt: Patch): number {
   // 아랫줄은 맨 아래 12%에서만 본다. 판넬 4의 가로줄(높이 70~82%)이 번져도 아랫줄로 보지 않게.
   // 화면이 작아 줄 수가 적으면 맨 아래 두 줄까지 본다
   const bottom = bar(Math.min(0.88, 1 - 2 / h), 1) >= 0.5
-  const middle = bar(0.25, 0.8) >= 0.7
-  if (!bottom) return middle ? 4 : 7
+  // 가운데 줄은 폭의 60% 이상 이어지면 있다고 본다 (위쪽 표시줄 글꼴의 8은 가운데가 폭의 62%다)
+  const middle = bar(0.25, 0.8) >= 0.6
+  const upLeft = side(true, 0.15, 0.4) >= 0.75, upRight = side(false, 0.15, 0.4) >= 0.75
+  // 9의 위쪽 고리: 왼쪽 세로획이 12~45% 높이를 거의 다 채운다 (3의 왼쪽 위 갈고리는 30%쯤에서 끝난다)
+  const loopLeft = side(true, 0.12, 0.45) >= 0.85
+  // 아랫줄이 없다: 4(가운데 줄) · 7(가운데 줄 없음) · 꼬리가 짧은 9(가운데 줄 + 위쪽 고리: 윗줄과 양쪽 세로획)
+  if (!bottom) return middle ? (loopLeft && upRight && bar(0, 0.2) >= 0.75 ? 9 : 4) : 7
   if (side(false, 0.6, 0.85) < 0.75) return 2
-  // 0은 가운데 줄이 없고 오른쪽 위 세로획이 있다. 둘 중 하나라도 어긋나면 6이다 (가운데 줄이 둥글어 짧게 잡혀도 6으로 본다)
-  if (side(true, 0.5, 0.75) >= 0.75) return middle || side(false, 0.15, 0.4) < 0.75 ? 6 : 0
-  // 5는 위쪽 세로획이 왼쪽에만 있다. 3은 오른쪽에 있다 (왼쪽 위 갈고리가 번져 보여도 3이다)
-  return side(true, 0.15, 0.4) >= 0.75 && side(false, 0.15, 0.4) < 0.75 ? 5 : 3
+  if (side(true, 0.5, 0.75) >= 0.75) {
+    // 아래쪽 왼쪽 세로획이 있다: 0 · 6 · 8. 8은 구멍이 둘이거나, 가운데 줄이 있거나, 허리가 잘록하다
+    // (위쪽 표시줄 글꼴의 8은 두 고리가 가운데에서 트여 있어 구멍이 하나지만 허리가 양쪽에서 들어간다).
+    // 0은 가운데 줄이 없고 오른쪽 위 세로획이 있다. 둘 중 하나라도 어긋나면 6이다 (가운데 줄이 둥글어 짧게 잡혀도 6으로 본다)
+    if (holes(pt) >= 2 || (middle && upRight && upLeft) || (upRight && upLeft && pinched(pt))) return 8
+    return middle || !upRight ? 6 : 0
+  }
+  // 아래쪽 왼쪽이 비었다: 3 · 5 · 9. 9는 위쪽 고리가 닫혀 양쪽에 세로획이 있다. 5는 왼쪽에만, 3은 오른쪽에만
+  if (loopLeft && upRight) return 9
+  return upLeft && !upRight ? 5 : 3
+}
+
+/** 글자 안의 구멍 수 (바깥에서 못 닿는 빈 영역). 0·6·9는 하나, 8은 둘 */
+function holes(pt: Patch): number {
+  const { w, h } = pt
+  const seen = new Uint8Array(w * h)
+  const fill = (start: number) => {
+    const stack = [start]
+    seen[start] = 1
+    while (stack.length) {
+      const k = stack.pop()!, x = k % w, y = (k - x) / w
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+        const nk = ny * w + nx
+        if (!seen[nk] && pt.data[nk] <= 0.5) { seen[nk] = 1; stack.push(nk) }
+      }
+    }
+  }
+  for (let x = 0; x < w; x++) { if (pt.data[x] <= 0.5 && !seen[x]) fill(x); const b = (h - 1) * w + x; if (pt.data[b] <= 0.5 && !seen[b]) fill(b) }
+  for (let y = 0; y < h; y++) { const l = y * w; if (pt.data[l] <= 0.5 && !seen[l]) fill(l); const r = l + w - 1; if (pt.data[r] <= 0.5 && !seen[r]) fill(r) }
+  let n = 0
+  for (let k = 0; k < w * h; k++) if (pt.data[k] <= 0.5 && !seen[k]) { n++; fill(k) }
+  return n
+}
+
+/** 허리(높이 40~60%)가 위아래(15~30%, 70~85%)보다 양쪽에서 들어가 있나 (8의 잘록한 허리) */
+function pinched(pt: Patch): boolean {
+  const { w, h } = pt
+  /** 높이 a~b 구간의 줄들이 양쪽에서 들어간 칸 수. narrow면 가장 많이 들어간 줄, 아니면 가장 덜 들어간 줄 */
+  const inset = (a: number, b: number, narrow: boolean) => {
+    let v = narrow ? -1 : Infinity
+    for (let y = 0; y < h; y++) {
+      const c = (y + 0.5) / h
+      if (c < a || c >= b) continue
+      let l = -1, r = -1
+      for (let x = 0; x < w; x++) if (pt.data[y * w + x] > 0.5) { if (l < 0) l = x; r = x }
+      if (l < 0) continue
+      const d = l + (w - 1 - r)
+      v = narrow ? Math.max(v, d) : Math.min(v, d)
+    }
+    return v < 0 || v === Infinity ? 0 : v
+  }
+  const outer = Math.max(inset(0.15, 0.3, false), inset(0.7, 0.85, false))
+  return inset(0.4, 0.6, true) - outer >= Math.max(1.5, 0.15 * w)
 }
 
 export function dist(a: number[], b: number[]) {

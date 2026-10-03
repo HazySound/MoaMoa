@@ -16,6 +16,7 @@ import { ADV, type Plan, type Rescue, type Step } from './core/solver'
 import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, isFilledState, isIconState, readAbilityFull, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
 import { readGlyphs, type GlyphReads } from './vision/digits'
+import { readTopBar, type TopBar } from './vision/topbar'
 import { ScreenCounts, emptyMemory, type Memory } from './core/counts'
 import type { SolveRequest, SolveResponse } from './solver.worker'
 import SolverWorker from './solver.worker?worker'
@@ -79,9 +80,18 @@ class Engine {
   solveReason = $state('')
   /** 최근 일어난 일 (인식 화면 보기에 보여 준다. 문제를 제보받을 때 원인을 찾는 용도) */
   events = $state<{ t: number; what: string; detail: string }[]>(loadEvents())
+  /**
+   * 화면 숫자로 값을 바로잡았을 때 몇 초간 띄우는 알림. 사용자가 보정된 값을 직접 보고 맞는지 확인할 수 있게
+   * (조용히 바꾸면 틀린 보정을 알아챌 길이 없다). 8초 뒤 tick에서 지운다
+   */
+  notices = $state<{ t: number; text: string }[]>([])
+  private notify(text: string) {
+    this.notices = [...this.notices.slice(-3), { t: Date.now(), text }]
+  }
   private log(what: string, detail = '') {
     // 능력 개수가 어긋난 원인을 한 판 단위로 되짚을 수 있게 넉넉히 남긴다 (30개로는 몇 세트밖에 안 됐다)
     this.events = [{ t: Date.now(), what, detail }, ...this.events].slice(0, 400)
+    if (what === '화면 숫자' || what === '화면 줄 수' || what === '합으로 알아냄' || what === '아이콘 칸 바로잡음') this.notify(`${what}: ${detail.split(' · ')[0]}`)
     try { localStorage.setItem(EVENTS_KEY, JSON.stringify(this.events)) } catch { /* 이번 창에서만 남는다 */ }
   }
 
@@ -263,6 +273,7 @@ class Engine {
   private async tick() {
     const src = this.source
     if (!src) return
+    if (this.notices.length && this.notices[0].t < Date.now() - 8000) this.notices = this.notices.filter((n) => n.t >= Date.now() - 8000)
     if (!this.grid) {
       const full = await src.grab()
       if (!full) return
@@ -326,6 +337,7 @@ class Engine {
     // 능력 숫자는 판 미리보기와 상관없는 자리라 매 프레임 읽는다
     const full = readAbilityFull(frame.image, g)
     this.syncNumbers(readGlyphs(frame.image, g), full, live)
+    this.syncTopBar(readTopBar(frame.image, g), live)
     if (br.busy) { this.status = 'busy'; return }
     this.status = live ? 'live' : 'image'
     if (full !== this.gameFull && this.steady('full', String(full), live ? 3 : 1)) {
@@ -414,6 +426,29 @@ class Engine {
     }
   }
   private lastScreenEvent = ''
+
+  /** 마지막으로 읽은 위쪽 표시줄 (진단용) */
+  private top: TopBar = { score: null, lines: null, best: null }
+  /**
+   * 위쪽 표시줄의 '제거한 줄 수'와 '점수'로 지운 줄 수와 판 기록 점수를 맞춘다.
+   * 따라 세면 화면 기준으로 다시 맞출 때마다 그 사이 지운 줄이 빠진다 (16만 점 판에서 도우미 381줄, 실제 406줄).
+   * 같은 값이 3프레임 이어져야 믿는다 (숫자가 바뀌는 중, 반짝임 등)
+   */
+  private syncTopBar(t: TopBar, live: boolean) {
+    this.top = t
+    if (!this.updatedAt) return
+    const need = live ? 3 : 1
+    if (t.lines !== null && this.steady('topLines', String(t.lines), need) && t.lines !== this.lines) {
+      // 줄 수는 늘기만 한다. 새 판이면 0으로 돌아간다 (새 게임은 resync가 따로 잡지만, 못 잡았어도 화면을 믿는다)
+      this.log('화면 줄 수', `${this.lines} → ${t.lines}`)
+      this.lines = t.lines
+      this.logGame((g) => { g.lines = t.lines! })
+    }
+    if (t.score !== null && this.steady('topScore', String(t.score), need)) {
+      const cur = this.games.current
+      if (cur && cur.score !== t.score) this.logGame((g) => { g.score = t.score! })
+    }
+  }
   /** 화면 숫자로 개수를 한 번 맞춘 뒤다 (처음 맞출 때 값이 커지는 건 능력을 얻은 게 아니다) */
   private numsSettled = false
   private lastWhy: Record<string, string> = {}
@@ -424,6 +459,7 @@ class Engine {
     return [
       `도우미: 점 찍기 ${this.dots} · 바꿔 뽑기 ${this.swaps} · 다음 ${this.nextAbility} · 꽉 참 ${this.gameFull} · 화면 숫자 ${this.numsSeen ? '읽는 중' : '아직 못 읽음'}`,
       `판 칸 크기 ${this.grid?.pitch.toFixed(2) ?? '?'}${why ? ' · 못 잡은 자리 ' + why : ''}`,
+      `위쪽 표시줄: 점수 ${this.top.score ?? '못 읽음'} · 줄 수 ${this.top.lines ?? '못 읽음'} · 최고 ${this.top.best ?? '못 읽음'} (도우미 줄 수 ${this.lines})`,
       this.screen.diagnose(),
     ].join('\n')
   }

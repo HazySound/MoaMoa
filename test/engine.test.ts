@@ -490,6 +490,28 @@ describe('능력 개수는 게임 화면 숫자가 기준', () => {
     expect(engine.abilityUnsure).toBe(false)
   })
 
+  test('실제 캡처: 위쪽 표시줄의 줄 수·점수로 도우미 값을 맞춘다 (줄 수가 모자라던 문제)', async () => {
+    engine.reset()
+    engine.capturing = true // 판 기록은 화면 공유 중에만 쌓인다
+    try {
+      feed('count-off.png', 2)
+      await flush()
+      engine.lines = 70 // 다시 맞춤 때 몇 줄을 놓쳤다고 치자
+      engine.events = []
+      engine.notices = []
+      feed('count-off.png', 3)
+      await flush()
+      expect(engine.lines).toBe(77)
+      expect(engine.events.some((e: any) => e.what === '화면 줄 수' && e.detail === '70 → 77')).toBe(true)
+      // 보정했다고 알린다 (사용자가 직접 확인할 수 있게)
+      expect(engine.notices.map((n: any) => n.text)).toContain('화면 줄 수: 70 → 77')
+      expect(engine.games.current?.score).toBe(33068)
+      expect(engine.games.current?.lines).toBe(77)
+    } finally {
+      engine.capturing = false
+    }
+  })
+
   test('실제 캡처(능력 꽉 참): 버튼 1 + 6을 읽는다', async () => {
     engine.reset()
     feed('full.png', 3)

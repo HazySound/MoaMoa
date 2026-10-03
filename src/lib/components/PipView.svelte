@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fly } from 'svelte/transition'
+  import { fly, slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import { engine } from '../engine.svelte'
   import Board from './Board.svelte'
@@ -95,6 +95,10 @@
     <span class="ml-auto text-ink-400">다음 능력 <b class="text-ink-100">{engine.nextAbility ?? '?'}</b>번{#if engine.nextUnsure}<span class="unsure ml-1" title="새 아이콘이 나오면 자동으로 맞춰요">?</span>{/if}</span>
   </div>
 
+  {#each engine.notices as n (n.t)}
+    <!-- 화면 숫자로 바로잡은 값. 틀렸으면 아래 설정에서 바로 고칠 수 있게 보여 준다 -->
+    <div class="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200" transition:slide={{ duration: 150 }}>{n.text}</div>
+  {/each}
   {#if engine.heldMismatch}
     <div class="rounded-xl border border-s2/40 bg-s2/10 px-3 py-2 text-xs text-ink-100">
       {engine.gameFull ? `게임은 능력이 꽉 찼는데(7/7) 도우미는 ${engine.held}개로 알고 있어요. 아래 설정에서 개수를 맞춰 주세요.` : `게임은 능력 자리가 남았는데 도우미는 7개로 알고 있어요. 개수를 맞춰 주세요.`}
