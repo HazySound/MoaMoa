@@ -87,6 +87,8 @@ interface State {
   dotsUsed: number
   /** 쓴 점 찍기의 비용 합 (위기용 여분에 손대면 비싸다) */
   dotCost: number
+  /** 이 판의 큰 제거 잠재력 보너스 (quick에 이미 더해져 있다). 자식 후보를 추릴 때 어림값으로 쓴다 */
+  pot: number
 }
 
 /** slot -1이면 점 찍기 */
@@ -97,9 +99,13 @@ const DOT_SHAPE: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 /**
  * 아이콘 줄을 지워 능력을 얻는 배치에 얹는 가중치 (게임 점수가 아니다). 능력의 진짜 값어치는 그걸로 뭘 하느냐에서
  * 나오고 그건 계획 안의 점 찍기 단계·잠재력이 따로 계산한다. 여기서는 '위기에서 판을 살릴 여분'만 친다:
- * 하나도 없으면 900, 많이 들고 있으면 250 (사용자 지적 2026-10-03: 들고만 있는 능력이 900점일 리 없다)
+ * 하나도 없으면 900, 많이 들고 있으면 400 (사용자 지적 2026-10-03: 들고만 있는 능력이 900점일 리 없다.
+ * 250까지 내렸더니 아이콘 줄을 안 챙겨 후반에 능력이 말라 죽었다 → 400. 가상 플레이에서는 250과 차이 없음, 실제 판 지적으로 올림)
  */
-const abilityWorth = (held: number) => Math.max(250, 900 - 150 * held)
+const abilityWorth = (held: number) => Math.max(ADV.abilFloor, 900 - ADV.abilSlope * held)
+
+/** 테스트 진단용 훅 */
+export const DEBUG: { onBeam: null | ((depth: number, beam: State[], prelim: number) => void) } = { onBeam: null }
 
 const BEAM = 160
 const FINAL = 48
@@ -153,10 +159,15 @@ export const W = {
   vTrans: 2.5,
   /** 찬 칸 수 */
   filled: 6,
-  /** 1칸짜리 구멍 */
-  p1: 70,
-  /** 2칸짜리 구멍 */
-  p2: 50,
+  /**
+   * 1칸짜리 구멍 (점 찍기로만 메울 수 있다). 70이었을 때는 더미 잠재력에 밀려 "구멍은 나중에 점 찍기로 메우지"가 돼
+   * 고립된 빈칸을 거리낌 없이 만들었다 (2026-10-03 사용자 지적, 성향 1.0 판 95세트에서 사망).
+   * 그렇다고 점 찍기 값(350)까지 올리면 줄을 지우면서 생기는 구멍까지 피하느라 지우지 않게 돼 더 일찍 죽는다
+   * (앱 조건 8판: 70 → 109.6세트·105,565 / 150 → 115.6·111,984 / 350 → 107.0·96,991, 다음 세트 가상 플레이 없이는 350이 80세트)
+   */
+  p1: 150,
+  /** 2칸짜리 구멍 (2칸 조각이 없어 점 찍기 둘로만 메운다) */
+  p2: 100,
   /** 막다른 빈칸 */
   deadEnd: 6,
   /** 통째로 빈 줄 (큰 조각 자리) */
@@ -327,7 +338,7 @@ export function outlook(b: Board, weights: Map<number, number>): Outlook {
 
 function finalEval(st: State, inp: SolveInput, remaining: number): { value: number; o: Outlook } {
   const o = outlook(st.board, inp.weights)
-  const danger = 9000 + (1 - inp.style) * 26000
+  const danger = ADV.dangerBase + (1 - inp.style) * ADV.dangerStyle
   let value = st.gained + quickEval(st.board, inp.style) + o.flex * 600 - o.risk * danger - o.stuck * 120
   if (W.potential) value += W.potential * scoreMul(inp.style) * multiPotential(st.board, inp.weights, spareDotsAfter(inp, st.dotsUsed))
   // 다 못 놓은 조각이 있으면 그 판은 끝난다
@@ -340,7 +351,8 @@ function finalEval(st: State, inp: SolveInput, remaining: number): { value: numb
 function searchPlans(inp: SolveInput, topN: number): Plan[] {
   const slots = inp.hand.map((s, i) => [i, s] as const).filter((x): x is readonly [number, Shape] => x[1] !== null)
   const orients = new Map(slots.map(([i, s]) => [i, orientations(s)]))
-  const start: State = { board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0, dotsUsed: 0, dotCost: 0 }
+  const start: State = { board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0, dotsUsed: 0, dotCost: 0, pot: 0 }
+  if (W.potential) start.pot = W.potential * scoreMul(inp.style) * multiPotential(inp.board, inp.weights, spareDotsAfter(inp, 0))
   const allUsed = slots.reduce((m, [i]) => m | (1 << i), 0)
   // 점 찍기를 넉넉히 들고 있으면(위기용 keepDots개는 남기고) 계획 안에 점 찍기 단계를 넣는다.
   // 전에는 능력을 '막혔을 때 살리기'로만 써서, 점 찍기 5개를 쥐고도 두 칸 메워 큰 제거 자리를 만드는 수를 못 봤다 (2026-10-03 사용자 지적)
@@ -375,7 +387,9 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
           for (const ic of st.icons) if (clearedMask & (1 << ic.r) && st.held + got < ABILITY_CAP) got++
         }
         const gained = s.cells + lineScore(lines) + got * ABILITY_SCORE
-        let quick = st.gained + gained + (doneAbilities + got) * abilityWorth(st.held) + quickEval(scratch, inp.style) - cost
+        // 부모의 잠재력 보너스를 자식의 어림값으로 얹는다. 잠재력은 추린 뒤에만 제대로 계산하는데, 그 전 순위가 빠른 평가만이면
+        // 한 줄 지우는 +300이 더미를 지키는 자리들을 전부 밀어내 잠재력을 볼 기회조차 없었다 (2026-10-03: stack5 판에서 5줄 더미를 깨고 한 줄을 털었다)
+        let quick = st.gained + gained + (doneAbilities + got) * abilityWorth(st.held) + quickEval(scratch, inp.style) - cost + (ADV.parentPot ? st.pot : 0)
         if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask) * scoreMul(inp.style)
         const key = boardKey(scratch) + (slot < 0 ? st.used : st.used | (1 << slot))
         const prev = best.get(key)
@@ -403,14 +417,37 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
     // 빠른 평가로 빔 폭의 두 배까지 추린 뒤, 그 후보들에는 큰 제거 잠재력을 붙여 다시 순위를 매긴다.
     // 잠재력을 마지막 평가에서만 보면 더미를 쌓아 가는 중간 단계(점 찍기 하나, 조각 하나)가 빠른 평가에서
     // 비용으로만 보여 일찍 잘려 나간다 (2026-10-03 사용자 지적: 5줄 더미를 만들 수 있는데 한 줄을 털었다)
-    const prelim = [...best.values()].sort((a, b) => b.quick - a.quick).slice(0, W.potential ? width * 2 : width)
+    const all = [...best.values()].sort((a, b) => b.quick - a.quick)
+    const take = W.potential ? width * 2 : width
+    let prelim: Cand[]
+    if (ADV.perParent > 0 || ADV.parentCap > 0) {
+      // 부모마다 자식을 최소 perParent개는 넣고(다양성), 최대 parentCap개까지만 넣는다(한 부모의 변주가 빔을 점령하지 않게)
+      const used = new Map<number, number>()
+      prelim = []
+      const picked = new Set<Cand>()
+      if (ADV.perParent > 0) for (const cd of all) {
+        const k = used.get(cd.pi) ?? 0
+        if (k < ADV.perParent) { used.set(cd.pi, k + 1); prelim.push(cd); picked.add(cd) }
+      }
+      for (const cd of all) {
+        if (prelim.length >= take) break
+        if (picked.has(cd)) continue
+        const k = used.get(cd.pi) ?? 0
+        if (ADV.parentCap > 0 && k >= ADV.parentCap) continue
+        used.set(cd.pi, k + 1); prelim.push(cd)
+      }
+    } else prelim = all.slice(0, take)
     const children = prelim.map((cd) => {
       const o = cd.slot < 0 ? dotOrient : orients.get(cd.slot)![cd.oi]
       const child = expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp)
-      if (W.potential) child.quick += W.potential * scoreMul(inp.style) * multiPotential(child.board, inp.weights, spareDotsAfter(inp, child.dotsUsed))
+      if (W.potential) {
+        child.pot = W.potential * scoreMul(inp.style) * multiPotential(child.board, inp.weights, spareDotsAfter(inp, child.dotsUsed))
+        child.quick += child.pot
+      }
       return child
     })
     beam = children.sort((a, b) => b.quick - a.quick).slice(0, width)
+    DEBUG.onBeam?.(depth, beam, prelim.length)
   }
   // 조각을 다 놓은 계획들 (마지막 빔 + 도중에 다 놓고 끝낸 것). 같은 걸 두 번 넣지 않는다
   const seenDone = new Set<State>()
@@ -469,7 +506,7 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   // 쓴 점 찍기의 비용 합
   const dotCost = st.dotCost + (slot < 0 ? dotStepCost(inp, st.dotsUsed) : 0)
   return {
-    board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed, dotCost,
+    board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed, dotCost, pot: 0,
     steps: [...st.steps, step],
     quick: total + acc + abilityBonus + quickEval(board, style) - dotCost - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
   }
@@ -511,7 +548,7 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
     opts.onProgress?.(Math.min(0.99, 0.35 + 0.65 * (now() - t0) / budget))
   }
   // 죽는 표본은 크게 깎는다. 능력이 있으면 한 번은 버틸 수 있어서 덜 깎는다
-  const deathCost = (inp.heldAbilities > 0 ? 9000 : 20000) * (1.2 - inp.style * 0.4)
+  const deathCost = (inp.heldAbilities > 0 ? ADV.deathHeld : ADV.deathNone) * (1.2 - inp.style * 0.4)
   const scored = cands.map((p, i) => {
     const alive = samples - deaths[i]
     const mean = (sums[i] - deaths[i] * deathCost) / samples
@@ -620,12 +657,13 @@ function singlePenalty(before: Board, clearedMask: number): number {
  * 기다리는 동안 다른 조각을 어딘가에 놓아야 하므로 판 여유(빈칸)가 기다릴 수 있는 길이를 정한다.
  * 한 세트에 약 15~19칸을 놓는다. 보수적으로 잡지 않는다: 빈칸이 60개 넘으면 세 세트 이상(12장)까지 기다리고,
  * 정말 한두 세트 안에 막힐 것 같을 때(빈칸 30개 아래)만 한 세트 안팎으로 줄여 지금 터는 쪽이 이기게 한다.
- * 일찍 털면 손해 볼 확률이 높다는 사용자 방침 (2026-10-03). 죽을 위험 자체는 마지막 평가의 risk 항목이 따로 깎는다
+ * 일찍 털면 손해 볼 확률이 높다는 사용자 방침 (2026-10-03). 9장(빈칸/8)으로 줄여 봤더니 앱 조건 8판에서
+ * 109.6세트·105,565 → 103.9·99,586으로 나빠져 되돌렸다. 죽을 위험 자체는 마지막 평가의 risk 항목과 다음 세트 가상 플레이가 깎는다
  */
 function potentialDraws(b: Board): number {
   let free = 0
   for (let r = 0; r < ROWS; r++) free += COLS - popcount(b[r])
-  return Math.max(3, Math.min(12, Math.round(free / 6)))
+  return Math.max(3, Math.min(ADV.drawsMax, Math.round(free / ADV.drawsDiv)))
 }
 
 /**
@@ -798,6 +836,34 @@ export function rescue(inp: SolveInput, base: Plan | undefined): Rescue | null {
  *  - 6개 이상이면(7개면 아이콘이 안 생기고 카운트도 멈춘다) 이득이 되는 순간 점 찍기부터 털어 회전시킨다
  */
 export const ADV = {
+  /**
+   * 마지막 평가에서 '다음 세트에 못 놓는 조각이 나올 확률'에 곱하는 벌점 (성향 무관한 몫).
+   * 전에는 9,000 + (1 − 성향) × 26,000이라 성향 1.0이면 9,000뿐이었다. 3줄 더미 하나의 기대값이 이걸 넘어
+   * "죽을 수도 있지만 쌓는다"가 돼 실제 판이 95세트에서 끝났다 (2026-10-03). 죽으면 뒤의 점수를 다 잃으니
+   * 성향과 무관하게 크게 둔다: 앱 조건 8판, 성향 1.0에서 111.1세트·105,228 → 122.1·116,859
+   */
+  dangerBase: 25000,
+  /** 위 벌점에 (1 − 성향)을 곱해 더하는 몫 */
+  dangerStyle: 10000,
+  /** 다음 세트 가상 플레이에서 죽는 표본 하나의 벌점 (능력을 들고 있을 때 / 없을 때). 위와 같은 이유로 올렸다 */
+  deathHeld: 12000,
+  deathNone: 24000,
+  /**
+   * 자식 후보를 추릴 때 부모 판의 잠재력 보너스를 어림값으로 얹는다 (searchPlans 참고).
+   * 끄면 5줄 더미를 만들 수 있는 판(test/fixtures/stack5.png)에서 한 줄을 턴다. 다음 세트 가상 플레이 없이 돌리는
+   * 가상 플레이(BUDGET=0)에서는 생존이 101 → 80세트로 나빠 보이지만, 앱 조건(BUDGET=200)에서는 성향 1.0에서 104.5 → 115.9세트
+   */
+  parentPot: true,
+  /** 자식 후보를 추릴 때 부모마다 최소 몇 개는 넣는다 (0이면 안 함) */
+  perParent: 0,
+  /** 자식 후보를 추릴 때 한 부모에서 최대 몇 개까지 넣는다 (0이면 제한 없음) */
+  parentCap: 0,
+  /** 능력 하나의 가치: 900 − abilSlope × 보유 수, 바닥 abilFloor */
+  abilFloor: 400,
+  abilSlope: 100,
+  /** 더미를 지울 조각을 기다리는 길이: 빈칸 ÷ drawsDiv 장, 최대 drawsMax 장 */
+  drawsDiv: 6,
+  drawsMax: 12,
   dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 6, keep: 0, capMode: 'any' as 'collect' | 'any', swapFirst: false,
   /**
    * 7개(꽉 참)일 때의 기회비용 (2026-10-03). 꽉 차 있으면 새 아이콘이 안 생기고 카운트도 멈춰 그 뒤 아이콘이 버려진다.
@@ -932,3 +998,7 @@ export function anchorCell(s: Shape, r: number, c: number): [number, number] {
   return [r + Math.floor((s.h - 1) / 2), c + Math.floor((s.w - 1) / 2)]
 }
 export const pocketsForTest = pockets
+
+/** 테스트·진단용 */
+export const quickEvalForTest = quickEval
+export const finalEvalForTest = finalEval
