@@ -67,3 +67,11 @@
 5. **3줄 띠 기준**: 잠재력 계산(multiPotential)에서 후반(단계 4·5)은 2줄보다 3줄 묶음에 가중치를 둔다. 2줄 띠는 후반 조각으로 못 만든다.
 
 이 다섯 개는 모두 "놓은 조각 주변 몇 칸"만 보는 계산이라 빠른 평가(quickEval)에 넣을 수 있다. 효과 검증은 가상 플레이(앱 조건)와 실제 판으로.
+
+## 6. 계산 다시 돌리기
+```
+ANALYSIS=1 npx vitest run scripts/analysis            # 둘 다 (띠 사슬까지 2~3분)
+ANALYSIS=1 npx vitest run scripts/analysis -t tiling  # 직사각형 조합 열거 (1초)
+ANALYSIS=1 npx vitest run scripts/analysis -t band2   # 띠 모델 (1분)
+```
+결과는 스크래치 폴더의 tilings.md·tilings2.md·band2.md·band-chain.md에 쓴다 (스크립트 안 경로).

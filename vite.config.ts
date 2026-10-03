@@ -19,5 +19,6 @@ export default defineConfig({
   worker: { format: 'es' },
   server: { port: 5174, strictPort: true },
   // 엔진 테스트는 추천 계산을 여러 번 돌려서, 가상 플레이가 같이 돌 때는 5초를 넘긴다
-  test: { include: ['test/**/*.test.ts'], testTimeout: 20000 },
+  // ANALYSIS=1이면 scripts/analysis의 분석 스크립트(조각 조합 열거, 띠 모델)도 돌린다: ANALYSIS=1 npx vitest run scripts/analysis
+  test: { include: process.env.ANALYSIS ? ['scripts/analysis/**/*.test.ts'] : ['test/**/*.test.ts'], testTimeout: 20000 },
 })
