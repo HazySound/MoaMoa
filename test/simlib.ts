@@ -10,6 +10,8 @@
  */
 import { emptyBoard, place, printBoard, type Board, type Icon, type Shape, ROWS, COLS } from '../src/lib/core/board'
 import { PIECES, defaultWeights, stageOf } from '../src/lib/core/pieces'
+import { blendedWeights } from '../src/lib/core/stats'
+import { readFileSync } from 'node:fs'
 import { abilityAdvice, rescue, solve, rng } from '../src/lib/core/solver'
 
 /** 실험용: ADVICE=1이면 앱처럼 막히기 전에도 능력을 쓴다 */
@@ -20,9 +22,29 @@ export const CAP = 500_000
 
 /** 실험용: SMALL=2면 5칸 이하 조각이 두 배 자주 나온다고 가정 */
 const SMALL = +(process.env.SMALL ?? 1)
+/**
+ * REAL=1이면 실제 플레이에서 센 단계별 조각 빈도(docs/data, 두 PC 합산 870개)를 쓴다.
+ * 1단계는 5칸 이하가 64%, 5단계는 36%라 균등 가정과 전혀 다르다
+ */
+const REAL = process.env.REAL === '1'
+const realCounts = REAL ? JSON.parse(readFileSync('docs/data/piece-stats-2026-10-03.json', 'utf8')).counts : null
+const stageWeights = new Map<number, Map<number, number>>()
+export function weightsFor(lines: number): Map<number, number> {
+  const stage = stageOf(lines)
+  let w = stageWeights.get(stage)
+  if (!w) {
+    w = REAL ? blendedWeights(realCounts, stage) : new Map(defaultWeights(stage))
+    if (!REAL && SMALL !== 1) {
+      for (const p of PIECES) if (p.shape.cells <= 5) w.set(p.id, w.get(p.id)! * SMALL)
+      const t = [...w.values()].reduce((a, b) => a + b, 0)
+      for (const [k, v] of w) w.set(k, v / t)
+    }
+    stageWeights.set(stage, w)
+  }
+  return w
+}
 function drawPiece(rand: () => number, lines: number): Shape {
-  const w = new Map(defaultWeights(stageOf(lines)))
-  if (SMALL !== 1) for (const p of PIECES) if (p.shape.cells <= 5) w.set(p.id, w.get(p.id)! * SMALL)
+  const w = weightsFor(lines)
   let x = rand() * [...w.values()].reduce((a, b) => a + b, 0)
   for (const p of PIECES) { x -= w.get(p.id)!; if (x <= 0) return p.shape }
   return PIECES.at(-1)!.shape
@@ -47,7 +69,7 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
     outer: for (; sets < maxSets && score < CAP; sets++) {
       let hand: (Shape | null)[] = [0, 1, 2].map(() => drawPiece(rand, lines))
       while (hand.some(Boolean)) {
-        const input = { board, icons, hand, heldAbilities: swaps + dots, swaps, dots, weights: defaultWeights(stageOf(lines)), style, beam, budgetMs: budget }
+        const input = { board, icons, hand, heldAbilities: swaps + dots, swaps, dots, weights: weightsFor(lines), style, beam, budgetMs: budget }
         const plan = solve(input)[0]
         // 앱과 똑같이 능력 추천을 따른다 (ADVICE면 막히기 전에도)
         if (plan?.incomplete || ADVICE) {

@@ -217,6 +217,8 @@
         {/each}
       </ol>
     </section>
+    <!-- 화면 공유 전에도 지난 판 기록과 통계를 볼 수 있게 -->
+    <StatsPanel />
   {:else}
     <!-- 추천 화면 -->
     <main class="grid gap-5 lg:grid-cols-[minmax(0,420px)_1fr]" in:fade>

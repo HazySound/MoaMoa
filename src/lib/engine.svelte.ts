@@ -17,6 +17,7 @@ import { ScreenSource, regionOf, frameFromBlob, type Frame } from './capture'
 import { detectGrid, isFilledState, isIconState, readAbilityFull, readBoard, readCards, type CardRead, type CellState, type Grid } from './vision/read'
 import { readGlyphs, type GlyphReads } from './vision/digits'
 import { readTopBar, type TopBar } from './vision/topbar'
+import { backup } from './backup.svelte'
 import { ScreenCounts, emptyMemory, type Memory } from './core/counts'
 import type { SolveRequest, SolveResponse } from './solver.worker'
 import SolverWorker from './solver.worker?worker'
@@ -137,6 +138,7 @@ class Engine {
     g.end = Date.now()
     this.games = { ...this.games, current: { ...g } }
     saveGames(this.games)
+    backup.schedule(() => this.snapshot())
   }
 
   private startGame() {
@@ -144,11 +146,13 @@ class Engine {
     const past = this.games.current && this.games.current.pieces > 0 ? [this.games.current, ...this.games.past].slice(0, 200) : this.games.past
     this.games = { current: newGame(true), past }
     saveGames(this.games)
+    backup.schedule(() => this.snapshot())
   }
 
   resetGames() {
     this.games = { current: null, past: [] }
     saveGames(this.games)
+    backup.schedule(() => this.snapshot())
   }
   get seenThisStage() { return seenIn(this.pieceCounts, this.stage) }
 
@@ -453,6 +457,18 @@ class Engine {
   private numsSettled = false
   private lastWhy: Record<string, string> = {}
 
+  /** 백업·내보내기에 쓰는 통계 묶음. 화면은 없고 조각 횟수·판 기록·설정뿐이다 */
+  snapshot() {
+    return {
+      note: '모아모아 조각 통계 (단계 → 조각 id → 나온 횟수)와 판 기록',
+      at: new Date().toISOString(),
+      build: __BUILD__,
+      counts: $state.snapshot(this.pieceCounts),
+      games: $state.snapshot(this.games),
+      prefs: { style: this.style, thinkMs: this.thinkMs, lines: this.lines, swaps: this.swaps, dots: this.dots },
+    }
+  }
+
   /** 지금 화면 숫자를 어떻게 읽고 있는지 (기록 복사에 붙는다. 개수가 안 맞을 때 이걸로 원인을 찾는다) */
   diagnostics(): string {
     const why = Object.entries(this.lastWhy).map(([k, v]) => k + ': ' + v).join(' · ')
@@ -677,11 +693,13 @@ class Engine {
     this.logGame((g) => g.sets++)
     this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
     saveCounts(this.pieceCounts)
+    backup.schedule(() => this.snapshot())
   }
 
   resetStats() {
     this.pieceCounts = {}
     saveCounts(this.pieceCounts)
+    backup.schedule(() => this.snapshot())
   }
 
   /** 기억한 카드 자리에 같은 조각이 그대로 보이는지 (못 읽는 카드는 '모름'이라 아니라고 본다) */

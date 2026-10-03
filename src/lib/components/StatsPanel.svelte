@@ -1,6 +1,9 @@
 <script lang="ts">
   import { slide, fade } from 'svelte/transition'
   import { engine } from '../engine.svelte'
+  import { backup } from '../backup.svelte'
+  import IconDownload from '~icons/lucide/download'
+  import IconCloud from '~icons/lucide/cloud-upload'
   import { PIECES } from '../core/pieces'
   import { seenIn } from '../core/stats'
   import MiniShape from './MiniShape.svelte'
@@ -31,13 +34,22 @@
   const best = $derived(Math.max(0, ...games.filter((g) => g.fromStart).map((g) => g.score)))
   const fmtDate = (t: number) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
+  const exportData = () => ({ ...engine.snapshot(), pieces: Object.fromEntries(PIECES.map((p) => [p.id, `${p.name} ${p.shape.cells}칸`])) })
+
+  /** 파일로 내려받기 (브라우저 저장소가 지워져도 남게) */
+  function download() {
+    const blob = new Blob([JSON.stringify(exportData(), null, 1)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `moamoa-stats-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  }
+
+  const fmtAgo = (t: number) => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? '방금' : s < 3600 ? `${Math.round(s / 60)}분 전` : `${Math.round(s / 3600)}시간 전` }
+
   async function copy() {
-    const data = {
-      note: '모아모아 조각 통계 (단계 → 조각 id → 나온 횟수)',
-      pieces: Object.fromEntries(PIECES.map((p) => [p.id, `${p.name} ${p.shape.cells}칸`])),
-      counts: engine.pieceCounts,
-      games,
-    }
+    const data = exportData()
     try {
       await navigator.clipboard.writeText(JSON.stringify(data))
       copied = true
@@ -130,7 +142,16 @@
         <p class="rounded-xl bg-fg/[0.03] p-4 text-center text-xs text-ink-400">{stage}단계에서 모은 조각이 아직 없어요</p>
       {/if}
 
-      <div class="mt-4 flex flex-wrap gap-2">
+      <!-- 자동 백업 상태. 통계는 이 브라우저에 쌓이고, 바뀔 때마다 서버(KV)에도 올린다 -->
+      <p class="mt-4 flex items-center gap-1.5 text-[11px] text-ink-500">
+        <IconCloud class="size-3.5" />
+        {#if backup.state === 'ok'}자동 백업됨 ({fmtAgo(backup.at)}) · 이 브라우저 id <span class="font-mono">{backup.id}</span>
+        {:else if backup.state === 'saving'}백업하는 중…
+        {:else if backup.state === 'error'}<span class="text-s3">백업 실패: {backup.error}</span> · 통계가 바뀌면 다시 올려요
+        {:else}통계가 바뀌면 자동으로 백업해요 · 이 브라우저 id <span class="font-mono">{backup.id}</span>{/if}
+      </p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <button class="mini" onclick={download} disabled={!allTotal && !games.length}><IconDownload class="size-3.5" />파일로 내려받기</button>
         <button class="mini" onclick={copy} disabled={!allTotal && !games.length}>
           {#if copied}<IconCheck class="size-3.5" />복사했어요{:else}<IconCopy class="size-3.5" />기록 복사 (JSON){/if}
         </button>

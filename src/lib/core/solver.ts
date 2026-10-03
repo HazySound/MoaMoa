@@ -165,6 +165,19 @@ export const W = {
    * 지우면서 채우는 건 괜찮다 (지워진 줄의 칸은 남지 않으니 벌점도 없다).
    */
   wellCol: 0,
+  /**
+   * 큰 단위 제거 준비 (2026-10-03). 실제 16만 점 판에서 2줄 제거는 횟수 15%로 점수 37%를 냈고,
+   * 기본 평가는 한 줄이 차면 바로 지워서 2줄 이상이 9%뿐이었다.
+   *  near2/near3: 위아래로 붙은 2·3줄이 모두 거의 찼고(빈칸 1~4) 빈칸이 조각 하나 폭(5칸) 안에 모여 있으면
+   *               한 조각으로 같이 지울 수 있다. 빈칸이 적을수록 크게 친다
+   *  single:      옆줄이 거의 찼는데(빈칸 ≤3) 한 줄만 지우는 배치의 벌점 (같이 지울 수 있었다)
+   *  potential:   다음 조각 하나로 2줄 이상 지울 수 있는 자리의 기대 점수(조각 확률 가중)에 곱하는 비율.
+   *               마지막 평가와 가상 플레이 끝에서 본다 (빠른 평가에서 쓰기엔 비싸다)
+   */
+  near2: 0,
+  near3: 0,
+  single: 0,
+  potential: 0,
 }
 
 /** 우물로 비워 둘 열 */
@@ -190,6 +203,7 @@ function quickEval(b: Board, style: number): number {
   }
   for (let r = 1; r < ROWS; r++) v -= popcount((b[r] ^ b[r - 1]) & FULL_ROW) * W.vTrans
   v -= filled * W.filled
+  if (W.near2 || W.near3) v += nearStacks(b)
   const [p1, p2, deadEnd] = pockets(b)
   v -= p1 * W.p1 + p2 * W.p2 + deadEnd * W.deadEnd
   if (W.emptyRow) v += emptyRows * W.emptyRow
@@ -284,6 +298,7 @@ function finalEval(st: State, inp: SolveInput, remaining: number): { value: numb
   const o = outlook(st.board, inp.weights)
   const danger = 9000 + (1 - inp.style) * 26000
   let value = st.gained + quickEval(st.board, inp.style) + o.flex * 600 - o.risk * danger - o.stuck * 120
+  if (W.potential) value += W.potential * multiPotential(st.board, inp.weights)
   // 다 못 놓은 조각이 있으면 그 판은 끝난다
   value -= remaining * 100000
   return { value, o }
@@ -326,7 +341,8 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
               for (const ic of st.icons) if (clearedMask & (1 << ic.r) && st.held + got < ABILITY_CAP) got++
             }
             const gained = s.cells + lineScore(lines) + got * ABILITY_SCORE
-            const quick = st.gained + gained + (doneAbilities + got) * 900 + quickEval(scratch, inp.style)
+            let quick = st.gained + gained + (doneAbilities + got) * 900 + quickEval(scratch, inp.style)
+            if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask)
             const key = boardKey(scratch) + (st.used | (1 << slot))
             const prev = best.get(key)
             if (!prev || prev.quick < quick) best.set(key, { pi, slot, oi, r, c, quick })
@@ -395,7 +411,7 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   return {
     board, icons, used: st.used | (1 << slot), gained: total, held: st.held + got,
     steps: [...st.steps, step],
-    quick: total + acc + abilityBonus + quickEval(board, style),
+    quick: total + acc + abilityBonus + quickEval(board, style) - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) : 0),
   }
 }
 
@@ -427,7 +443,7 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
   while (samples < 64 && (samples < 6 || now() < deadline)) {
     const set = [pick(table, rand), pick(table, rand), pick(table, rand)]
     cands.forEach((p, i) => {
-      const r = rollout(p.board, set, inp.style)
+      const r = rollout(p.board, set, inp.style, inp.weights)
       if (r === null) deaths[i]++
       else sums[i] += r
     })
@@ -447,7 +463,7 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
 }
 
 /** 판 위에서 세 조각을 작은 빔으로 놓아 본다. 다 못 놓으면 null */
-function rollout(board: Board, set: Shape[][], style: number): number | null {
+function rollout(board: Board, set: Shape[][], style: number, weights: Map<number, number>): number | null {
   interface S { b: number[]; used: number; gained: number; q: number }
   let beam: S[] = [{ b: board, used: 0, gained: 0, q: 0 }]
   const scratch = new Array<number>(ROWS)
@@ -486,7 +502,75 @@ function rollout(board: Board, set: Shape[][], style: number): number | null {
     if (!next.length) return null
     beam = next
   }
-  return beam[0].q
+  return beam[0].q + (W.potential ? W.potential * multiPotential(beam[0].b, weights) : 0)
+}
+
+// ─── 큰 단위 제거 ────────────────────────────────────────────────────────
+
+/** 비트 마스크의 가로 폭 (가장 왼쪽 빈칸부터 가장 오른쪽 빈칸까지) */
+function span(mask: number): number {
+  if (!mask) return 0
+  return 32 - Math.clz32(mask) - (31 - Math.clz32(mask & -mask))
+}
+
+/**
+ * 위아래로 붙은 2·3줄이 모두 거의 찼고 빈칸이 조각 하나 폭 안에 모여 있는 곳의 값.
+ * 빈칸이 적을수록 조각 하나로 메우기 쉬우니 (9 - 빈칸 수)만큼 친다
+ */
+function nearStacks(b: Board): number {
+  let v = 0
+  const miss = new Array<number>(ROWS), n = new Array<number>(ROWS)
+  for (let r = 0; r < ROWS; r++) { miss[r] = ~b[r] & FULL_ROW; n[r] = popcount(miss[r]) }
+  for (let r = 0; r + 1 < ROWS; r++) {
+    if (n[r] < 1 || n[r] > 4 || n[r + 1] < 1 || n[r + 1] > 4) continue
+    if (span(miss[r] | miss[r + 1]) > 5) continue
+    v += W.near2 * (9 - n[r] - n[r + 1])
+    if (W.near3 && r + 2 < ROWS && n[r + 2] >= 1 && n[r + 2] <= 3 && n[r] <= 3 && n[r + 1] <= 3 && span(miss[r] | miss[r + 1] | miss[r + 2]) <= 5)
+      v += W.near3 * (10 - n[r] - n[r + 1] - n[r + 2])
+  }
+  return v
+}
+
+/** 한 줄만 지우는데 바로 위나 아래 줄이 거의 찼으면(빈칸 ≤3) 같이 지울 수 있었다 */
+function singlePenalty(before: Board, clearedMask: number): number {
+  const k = 31 - Math.clz32(clearedMask)
+  const near = (r: number) => r >= 0 && r < ROWS && r !== k && popcount(~before[r] & FULL_ROW) <= 3 && popcount(~before[r] & FULL_ROW) >= 1
+  return near(k - 1) || near(k + 1) ? W.single : 0
+}
+
+/**
+ * 다음 조각 하나로 2줄 이상 한 번에 지울 수 있는 자리의 기대 점수 (조각 확률 × 가장 좋은 자리의 제거 점수).
+ * 2줄 1,200 · 3줄 2,700 · 4줄 4,800 · 5줄 7,500이라 큰 제거를 준비한 판이 크게 오른다
+ */
+export function multiPotential(b: Board, weights: Map<number, number>): number {
+  const n = new Array<number>(ROWS)
+  for (let r = 0; r < ROWS; r++) n[r] = popcount(~b[r] & FULL_ROW)
+  let ev = 0
+  for (const p of PIECES) {
+    const w = weights.get(p.id) ?? 0
+    if (!w) continue
+    let best = 0
+    for (const s of PIECE_ORIENTS.get(p.id)!) {
+      if (s.h < 2) continue
+      for (let r = 0; r + s.h <= ROWS; r++) {
+        // 범위 안에 빈칸 1~5인 줄이 둘은 있어야 2줄을 지운다 (조각 한 줄의 폭은 5칸 이하)
+        let near = 0
+        for (let i = 0; i < s.h; i++) if (n[r + i] >= 1 && n[r + i] <= 5) near++
+        if (near < 2) continue
+        for (let c = 0; c + s.w <= COLS; c++) {
+          let ok = true, k = 0
+          for (let i = 0; i < s.h; i++) {
+            const bits = s.rows[i] << c
+            if (b[r + i] & bits) { ok = false; break }
+            if ((b[r + i] | bits) === FULL_ROW) k++
+          }
+          if (ok && k >= 2) { const v = lineScore(k); if (v > best) best = v }
+        }
+      }
+    }
+    ev += w * best
+  }
+  return ev
 }
 
 type WeightTable = { cum: Float64Array; shapes: Shape[][] }

@@ -1,10 +1,15 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // 서버 코드 없는 정적 사이트. 빌드한 dist를 그대로 올린다 (npm run deploy)
+  // 정적 사이트(dist) + 통계 백업용 작은 워커(worker/index.ts, /api/*만 받는다)
   "name": "moamoa",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // 조각 통계·판 기록 백업. 2026-10-03 `wrangler kv namespace create STATS`로 만들었다
+  "kv_namespaces": [{ "binding": "STATS", "id": "f7f12aaf37934ce3a9bf9284bbd95982" }]
 }
