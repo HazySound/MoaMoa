@@ -18,5 +18,6 @@ export default defineConfig({
   define: { __BUILD__: JSON.stringify(buildTag()) },
   worker: { format: 'es' },
   server: { port: 5174, strictPort: true },
-  test: { include: ['test/**/*.test.ts'] },
+  // 엔진 테스트는 추천 계산을 여러 번 돌려서, 가상 플레이가 같이 돌 때는 5초를 넘긴다
+  test: { include: ['test/**/*.test.ts'], testTimeout: 20000 },
 })

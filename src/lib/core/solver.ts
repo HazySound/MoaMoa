@@ -612,7 +612,9 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
   const scored = cands.map((p, i) => {
     const alive = samples - deaths[i]
     const mean = (sums[i] - deaths[i] * deathCost) / samples
-    return { p, v: p.gained + p.abilityValue + mean, risk: deaths[i] / samples, alive }
+    // 어떤 조각으로도 못 덮는 빈칸(stuck)은 점 찍기로만 메우니 하나당 점 찍기 값만큼 깎는다. 전에는 탐색 단계의 평가(finalEval)에만
+    // 있어서 후보 12개 중에서 고를 때는 이번 세트 + 다음 세트 점수만 봤고, 구멍이 세트마다 하나씩 조용히 쌓였다 (2026-10-04, 로직.png)
+    return { p, v: p.gained + p.abilityValue + mean - p.stuck * ADV.stuckCost, risk: deaths[i] / samples, alive }
   })
   // 생존이 1순위 (docs/SCORE-CYCLE.md 5절): 같은 표본으로 돌렸으니 죽는 표본이 적은 계획이 무조건 앞. 같을 때만 점수로 가른다.
   // 전에는 벌점이라 큰 더미의 기대 점수가 사망 위험을 덮었다
@@ -939,6 +941,12 @@ export const ADV = {
   stackMax: 3,
   /** 다음 세트 가상 플레이의 사망 표본 수를 1순위 정렬 기준으로 쓴다 */
   survivalFirst: true,
+  /**
+   * 최종 후보를 고를 때 못 덮는 빈칸(stuck) 하나당 깎는 값. 구멍이 세트마다 쌓이는 걸 막으려고 넣었지만 가상 플레이에서는
+   * 나빴다 (앱 조건 8판·0.75: 0 → 137.0세트·134,483 / 300 → 131.9·124,493 / 600 → 111.9·104,004 / 600+구멍 300 → 115.6).
+   * 막다른 칸·토막·엇갈림 벌점을 올려도 134세트 안팎으로 차이 없음. 구멍을 피하려 들수록 줄을 덜 지워 더 빨리 찬다. 꺼 둔다
+   */
+  stuckCost: 0,
   /**
    * 7개(꽉 참)일 때의 기회비용 (2026-10-03). 꽉 차 있으면 새 아이콘이 안 생기고 카운트도 멈춰 그 뒤 아이콘이 버려진다.
    * 실제 16만 점 판에서 215세트 동안 능력 88개를 얻었으니 세트당 0.41개, 능력 하나를 900으로 치면 세트당 약 370점이다.
