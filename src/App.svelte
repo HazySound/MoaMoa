@@ -2,7 +2,7 @@
   import { fly, fade, slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import { Tween } from 'svelte/motion'
-  import { engine } from './lib/engine.svelte'
+  import { engine, RECOMMENDED } from './lib/engine.svelte'
   import { updater } from './lib/update.svelte'
   import { pip } from './lib/pip.svelte'
   import { theme } from './lib/theme.svelte'
@@ -388,7 +388,7 @@
           <label class="block">
             <span class="flex items-center justify-between text-xs text-ink-400">
               <span class="flex items-center gap-1"><IconShield class="size-3.5" />안전</span>
-              <span class="font-medium text-ink-200">플레이 성향</span>
+              <span class="font-medium text-ink-200">플레이 성향 <span class="font-mono">{engine.style.toFixed(2)}</span></span>
               <span class="flex items-center gap-1">고득점<IconFlame class="size-3.5" /></span>
             </span>
             <input
@@ -396,6 +396,9 @@
               onchange={(e) => engine.setStyle(+(e.currentTarget as HTMLInputElement).value)}
               class="range mt-3 w-full"
             />
+            <button class="mt-2 text-xs text-ink-400 underline-offset-2 hover:underline" onclick={() => engine.useRecommended()}>
+              권장 설정으로 (성향 {RECOMMENDED.style} · 계산 {RECOMMENDED.thinkMs / 1000}초)
+            </button>
           </label>
           <div class="grid grid-cols-4 gap-2 text-xs">
             {#each [

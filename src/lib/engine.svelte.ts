@@ -49,11 +49,25 @@ function loadEvents(): { t: number; what: string; detail: string }[] {
   try { const v = JSON.parse(localStorage.getItem(EVENTS_KEY) ?? '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
 }
 
-interface Prefs { style: number; swaps: number; dots: number; lines: number; thinkMs: number }
+interface Prefs { style: number; swaps: number; dots: number; lines: number; thinkMs: number; v?: number }
+
+/**
+ * 권장 설정 (2026-10-04, docs/SCORE-CYCLE.md): 2줄 사이클 설계는 앱 조건 가상 플레이에서 성향 0.75가 가장 좋았다
+ * (137세트·134,483 vs 1.0 130.6·126,322). 계산 시간 2.5초면 다음 세트 가상 플레이 표본이 넉넉하다
+ */
+export const RECOMMENDED = { style: 0.75, thinkMs: 2500 }
+/** 권장 설정이 바뀌면 올린다. 저장된 설정의 v가 이보다 낮으면 성향·계산 시간을 권장값으로 한 번 맞춘다 */
+const PREFS_VERSION = 2
 
 function loadPrefs(): Prefs {
-  const d: Prefs = { style: 0.2, swaps: 0, dots: 0, lines: 0, thinkMs: 1500 }
-  try { return { ...d, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') } } catch { return d }
+  const d: Prefs = { ...RECOMMENDED, swaps: 0, dots: 0, lines: 0, v: PREFS_VERSION }
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs>
+    const p = { ...d, ...saved }
+    // 예전 설정(성향 0.2·0.9 등)을 쓰던 브라우저는 새 로직의 권장값으로 옮긴다. 그 뒤로는 사용자가 바꾼 값을 지킨다
+    if ((saved.v ?? 1) < PREFS_VERSION) Object.assign(p, RECOMMENDED, { v: PREFS_VERSION })
+    return p
+  } catch { return d }
 }
 
 const cardSig = (cards: CardRead[]) => cards.map((c) => (c.state === 'piece' && c.shape ? c.shape.key : c.state)).join('/')
@@ -175,7 +189,7 @@ class Engine {
     this.thinkMs = p.thinkMs
     $effect.root(() => {
       $effect(() => {
-        const prefs: Prefs = { style: this.style, swaps: this.swaps, dots: this.dots, lines: this.lines, thinkMs: this.thinkMs }
+        const prefs: Prefs = { style: this.style, swaps: this.swaps, dots: this.dots, lines: this.lines, thinkMs: this.thinkMs, v: PREFS_VERSION }
         try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* 사생활 보호 모드 */ }
       })
     })
@@ -1085,6 +1099,12 @@ class Engine {
     this.style = v
     // 세트를 시작하기 전에만 다시 계산한다. 놓는 중에 계획이 바뀌면 헷갈린다
     if (this.stepIdx === 0) this.resolve()
+  }
+
+  /** 권장 설정으로 되돌린다 (성향 0.75 · 계산 2.5초) */
+  useRecommended() {
+    this.thinkMs = RECOMMENDED.thinkMs
+    this.setStyle(RECOMMENDED.style)
   }
 }
 

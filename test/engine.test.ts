@@ -25,6 +25,8 @@ let engine: AnyEngine
 beforeAll(async () => {
   ;(globalThis as any).window = globalThis
   engine = (await import('../src/lib/engine.svelte')).engine
+  // 권장 계산 시간(2.5초)으로는 추천 한 번이 테스트 제한(5초)을 넘긴다. 테스트는 추천 내용이 아니라 추적을 본다
+  engine.thinkMs = 300
 })
 
 const frame = (f: string) => {

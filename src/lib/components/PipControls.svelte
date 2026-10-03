@@ -1,6 +1,6 @@
 <script lang="ts">
   import { slide } from 'svelte/transition'
-  import { engine } from '../engine.svelte'
+  import { engine, RECOMMENDED } from '../engine.svelte'
   import { updater } from '../update.svelte'
   import IconSwap from '~icons/lucide/arrow-left-right'
   import IconDot from '~icons/lucide/circle-dot'
@@ -56,7 +56,7 @@
       </div>
 
       <label class="grid gap-1 text-[10px] text-ink-400">
-        <span class="flex justify-between"><span>안전</span><span class="text-ink-200">성향</span><span>고득점</span></span>
+        <span class="flex justify-between"><span>안전</span><span class="text-ink-200">성향 <span class="font-mono">{engine.style.toFixed(2)}</span></span><span>고득점</span></span>
         <input type="range" min="0" max="1" step="0.05" value={engine.style} onchange={(e) => engine.setStyle(+(e.currentTarget as HTMLInputElement).value)} class="range" />
       </label>
 
@@ -66,6 +66,7 @@
       </label>
 
       <button class="again" onclick={() => engine.resolve()}><IconRefresh class="size-3.5" />지금 판으로 다시 계산</button>
+      <button class="again" onclick={() => engine.useRecommended()}>권장 설정 (성향 {RECOMMENDED.style} · {RECOMMENDED.thinkMs / 1000}초)</button>
     </div>
   {/if}
 </div>
