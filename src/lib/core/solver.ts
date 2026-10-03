@@ -198,12 +198,15 @@ export const W = {
    * 그 뒤 multiPotential을 '다음 조각 하나'가 아니라 '판 여유만큼 기다리는 동안 하나라도 올 확률'로 바꿨다 (값이 커진다).
    * 같은 조건 8판: potential 0.8 → 93.3 · 68,165 · 23% / 1.0 → 88.8 · 64,547 / 1.5 → 100.0 · 73,718 · 24% / 2.5 → 73.3 · 52,802
    * 다시 더미(줄 묶음)별로 따로 쳐서 합치게 바꿨다 (하나만 세면 2줄 자리 하나에 포화돼 더 쌓을 보람이 없었다):
-   *   potential 1.0 → 100.3 · 78,424 · 27% (3줄 44번, 채택) / 1.5 → 99.6 · 74,997 · 25% / 2.5 → 90.3 · 67,543 · 26%
+   *   potential 1.0 → 100.3 · 78,424 · 27% (3줄 44번) / 1.5 → 99.6 · 74,997 · 25% / 2.5 → 90.3 · 67,543 · 26%
+   * 그 뒤 잠재력을 빔 탐색 중간(빔 폭 2배 후보)에도 붙이고, 남는 점 찍기로 메우는 자리까지 세고, 계획 안 점 찍기 단계를 켰다:
+   *   potential 0.6 + planDots → 104.9 · 85,880 · 34% (2줄 269 · 3줄 45 · 4줄 2, 채택) / 0.6 단계 끔 → 101.3 · 82,135
+   *   1.0 + planDots → 95.0 · 75,608 / 1.0 단계 끔 → 92.5 · 73,965
    */
   near2: 20,
   near3: 0,
   single: 0,
-  potential: 1.0,
+  potential: 0.6,
 }
 
 /** 우물로 비워 둘 열 */
@@ -383,7 +386,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
       }
       if (st.dotsUsed < dotBudget) {
         // 점 찍기는 거의 찬 줄(채움 ≥ planDotRowMin)의 빈칸에만 (그 밖은 조각으로 메우는 게 낫다). 쓴 점 찍기마다 비용을 뺀다
-        const cost = ADV.planDotCost * (st.dotsUsed + 1)
+        const cost = ADV.planDotCost
         for (let r = 0; r < ROWS; r++) {
           if (popcount(st.board[r]) < ADV.planDotRowMin) continue
           for (let c = 0; c < COLS; c++) if (!((st.board[r] >> c) & 1)) tryPlace(-1, DOT_SHAPE, 0, r, c, cost)
@@ -392,10 +395,18 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
       if (!expanded) finished.push(st)
     })
     if (!best.size) break
-    beam = [...best.values()].sort((a, b) => b.quick - a.quick).slice(0, inp.beam ?? BEAM).map((cd) => {
+    const width = inp.beam ?? BEAM
+    // 빠른 평가로 빔 폭의 두 배까지 추린 뒤, 그 후보들에는 큰 제거 잠재력을 붙여 다시 순위를 매긴다.
+    // 잠재력을 마지막 평가에서만 보면 더미를 쌓아 가는 중간 단계(점 찍기 하나, 조각 하나)가 빠른 평가에서
+    // 비용으로만 보여 일찍 잘려 나간다 (2026-10-03 사용자 지적: 5줄 더미를 만들 수 있는데 한 줄을 털었다)
+    const prelim = [...best.values()].sort((a, b) => b.quick - a.quick).slice(0, W.potential ? width * 2 : width)
+    const children = prelim.map((cd) => {
       const o = cd.slot < 0 ? dotOrient : orients.get(cd.slot)![cd.oi]
-      return expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp.style)
+      const child = expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp.style)
+      if (W.potential) child.quick += W.potential * scoreMul(inp.style) * multiPotential(child.board, inp.weights, spareDotsAfter(inp, child.dotsUsed))
+      return child
     })
+    beam = children.sort((a, b) => b.quick - a.quick).slice(0, width)
   }
   // 조각을 다 놓은 계획들 (마지막 빔 + 도중에 다 놓고 끝낸 것). 같은 걸 두 번 넣지 않는다
   const seenDone = new Set<State>()
@@ -450,8 +461,8 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   const abilityBonus = got * abilityWorth(st.held)
   const acc = st.steps.reduce((a, x) => a + x.abilities, 0) * abilityWorth(st.held)
   const dotsUsed = st.dotsUsed + (slot < 0 ? 1 : 0)
-  // 쓴 점 찍기의 비용 (하나씩 더 쓸수록 비싸진다)
-  const dotCost = ADV.planDotCost * (dotsUsed * (dotsUsed + 1)) / 2
+  // 쓴 점 찍기의 비용
+  const dotCost = ADV.planDotCost * dotsUsed
   return {
     board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed,
     steps: [...st.steps, step],
@@ -662,16 +673,20 @@ export function multiPotential(b: Board, weights: Map<number, number>, spareDots
     }
   }
   if (!groups.size) return 0
-  // 큰 더미부터 센다. 이미 센 더미에 포함되는 작은 더미(같은 줄들의 일부)는 또 세지 않는다
+  // 값이 큰 더미부터 센다. 이미 센 더미에 포함되는 작은 더미(같은 줄들의 일부)는 또 세지 않는다.
+  // 점 찍기는 전체 예산(spareDots)에서 한 번만 쓴다 — 더미마다 따로 다 쓸 수 있는 것처럼 세면
+  // 같은 점 찍기 3개를 여러 더미에 거듭 세서 잠재력이 부풀고, 점 찍기를 지금 써서 더미를 키우는 계획이 손해로 보인다
   const draws = potentialDraws(b)
-  const sorted = [...groups].sort((x, y) => popcount(y[0]) - popcount(x[0]) || y[1].q - x[1].q)
-  let ev = 0, covered = 0
-  for (const [mask, g] of sorted) {
-    if ((mask & covered) === mask) continue
+  const valued = [...groups].map(([mask, g]) => {
     const prize = lineScore(popcount(mask)) - ADV.planDotCost * g.dots
-    if (prize <= 0) continue
-    ev += prize * (1 - (1 - Math.min(1, g.q)) ** draws)
-    covered |= mask
+    return { mask, g, prize, ev: prize * (1 - (1 - Math.min(1, g.q)) ** draws) }
+  }).filter((x) => x.prize > 0).sort((x, y) => y.ev - x.ev)
+  let ev = 0, covered = 0, dotsLeft = spareDots
+  for (const x of valued) {
+    if ((x.mask & covered) === x.mask || x.g.dots > dotsLeft) continue
+    ev += x.ev
+    covered |= x.mask
+    dotsLeft -= x.g.dots
   }
   return ev
 }
@@ -781,14 +796,19 @@ export const ADV = {
    */
   capCost: 0,
   /**
+   * 6개(한도 가까움)일 때 능력을 미리 쓰려면 이만큼은 이득이어야 한다. 0이면 +340 같은 추정 오차 안의 차이로도
+   * 쌓아 둔 3줄 더미를 점 찍기로 깨라고 했다 (실제 화면 로직.png). 더미 가치는 확률 추정이라 작은 차이는 믿지 않는다
+   */
+  nearCapGain: 500,
+  /**
    * 계획 안의 점 찍기 (2026-10-03). 점 찍기를 keepDots개 넘게 들고 있으면 계획에 점 찍기 단계를 최대 planDotsMax개 넣는다.
    * 자리는 거의 찬 줄(채움 ≥ planDotRowMin)의 빈칸. 하나 쓸 때마다 planDotCost × 순번의 비용을 뺀다
    * (점 찍기가 많을수록 하나의 값어치는 낮다). 사용자: "점 찍기 5개 들고 있으면 두 칸 메워서 큰 제거 자리를 만들어야"
-   * 가상 플레이 8판(실제 빈도): 계획 단계로 미리 찍으면 74.3세트 · 55,276으로 생존이 크게 줄었다 (자리를 못 돌린다).
-   * 대신 dotFill(남는 점 찍기로 메울 자리를 잠재력에 넣기)만 켜면 98.9세트 · 76,791 · 2줄 226번으로 기본(100.3 · 78,424 · 210번)과
-   * 생존은 같고 큰 제거가 는다. 그래서 planDots는 끄고 dotFill만 켠다: 자리를 비워 두고 조각이 오면 점 찍기+조각으로 한 번에 턴다
+   * 처음에는 미리 찍으면 생존이 74세트로 줄었다. 빔 탐색 중간에도 잠재력을 붙이고 점 찍기 예산을 전체에서 한 번만 세게
+   * 고친 뒤에는 켜는 쪽이 낫다: 켬 104.9세트 · 85,880 vs 끔 101.3 · 82,135 (potential 0.6, 8판).
+   * 실제 화면(로직.png 셋째)에서 점 찍기 둘 + ㄱ3로 10열 5줄 더미를 만드는 계획이 나온다
    */
-  planDots: false,
+  planDots: true,
   /** 잠재력을 셀 때 남는 점 찍기로 모자란 칸을 메울 수 있다고 본다 (계획 단계 planDots와 따로 켠다) */
   dotFill: true,
   keepDots: 2,
@@ -831,7 +851,7 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
   const wide = atCap && ADV.capWide
   if (dots > 0) {
     const stuckMask = stuckRows(inp.board)
-    let best: Rescue | null = null, bestGain = atCap ? -ADV.capCost : nearCap && !(ADV.swapFirst && swaps > 0) ? 0 : ADV.dotGain
+    let best: Rescue | null = null, bestGain = atCap ? -ADV.capCost : nearCap && !(ADV.swapFirst && swaps > 0) ? ADV.nearCapGain : ADV.dotGain
     // 후보 칸: 한 칸만 빈 줄의 그 칸. 꽉 찼으면 거의 찬 줄(빈칸 ≤ 4)의 빈칸과 어떤 조각으로도 못 메우는 칸까지 넓힌다
     const cells: [number, number][] = []
     for (let r = 0; r < ROWS; r++) {
@@ -860,7 +880,7 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
     const SAMPLES = 5 // 3으로 줄이면 바꿔 뽑기 판단이 흔들려 생존이 124 → 90세트로 떨어졌다 (2026-10-03). 느려도 5개
     let best: Rescue | null = null
     // 꽉 찼는데 점 찍기를 쓸 만한 자리가 없으면 바꿔 뽑기도 기회비용만큼은 손해를 감수한다
-    let bestGain = atCap ? -ADV.capCost : makeRoom ? roomGain : nearCap ? 0 : ADV.swapGain
+    let bestGain = atCap ? -ADV.capCost : makeRoom ? roomGain : nearCap ? ADV.nearCapGain : ADV.swapGain
     // 바꿀 카드는 바꾼 뒤 평균이 가장 좋은(손실이 가장 적은) 카드
     inp.hand.forEach((h, slot) => {
       if (!h) return

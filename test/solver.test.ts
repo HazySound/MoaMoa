@@ -298,3 +298,26 @@ describe('점 찍기를 넉넉히 들고 있으면 그걸로 메울 자리를 �
     } finally { ADV.planDots = saved }
   }, 30_000)
 })
+
+describe('5줄 더미를 만들 수 있으면 한 줄을 털지 않는다 (실제 화면 로직.png 셋째)', () => {
+  // 9~10행은 10열(0-based 9)만 비었고 11~13행은 몇 칸 더 비었다. 점 찍기 두 개와 ㄱ3(ㄴ자)로 메우면 10열이 5줄 연속으로 빈다.
+  // 전에는 ㄱ3로 13행을 300점에 털어 더미를 깼다. 원인: 빔 탐색의 빠른 평가에 잠재력이 없어 쌓는 중간 단계가 잘려 나갔다
+  test('추천이 한 줄을 지우지 않고 더미를 키우며, 점 찍기 단계가 들어간다', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { PNG } = await import('pngjs')
+    const { detectGrid, readBoard, readCards } = await import('../src/lib/vision/read')
+    const { blendedWeights } = await import('../src/lib/core/stats')
+    const { multiPotential } = await import('../src/lib/core/solver')
+    const img = PNG.sync.read(readFileSync('test/fixtures/stack5.png')) as any
+    const g = detectGrid(img)!
+    const br = readBoard(img, g)
+    const hand = readCards(img, g).map((c) => (c.state === 'piece' ? c.shape : null))
+    const counts = JSON.parse(readFileSync('docs/data/piece-stats-2026-10-03.json', 'utf8')).counts
+    const inp = { board: br.board, icons: br.icons, hand, heldAbilities: 5, swaps: 0, dots: 5, weights: blendedWeights(counts, 4), style: 0.75, beam: 160 }
+    const plan = solve(inp, 1)[0]
+    expect(plan.steps.some((s) => s.cleared.length === 1)).toBe(false)
+    // 놓고 난 판은 10열(0-based 9)이 길게 비어, 남는 점 찍기로 메우면 ㅣ 하나로 4~5줄이 된다
+    const dotsUsed = plan.steps.filter((s) => s.slot < 0).length
+    expect(multiPotential(plan.board, inp.weights, Math.max(0, 3 - dotsUsed))).toBeGreaterThan(3000)
+  }, 60_000)
+})
