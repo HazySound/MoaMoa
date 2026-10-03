@@ -386,7 +386,7 @@ class Engine {
   private syncNumbers(r: GlyphReads, full: boolean, live: boolean) {
     this.lastWhy = r.why
     // 최근 20초 안에 얻은 능력 종류. 꽉 찼는데 버튼 숫자로 못 정하면 그쪽에 더한다
-    const hint = Date.now() - this.lastGain.at < 20_000 ? this.lastGain.kind : 'dots'
+    const hint = Date.now() - this.lastGain.at < 6000 ? this.lastGain.kind : null
     for (const e of this.screen.feed(r, full, live ? 3 : 1, hint)) {
       // 같은 화면이 깜빡일 때마다 같은 말을 되풀이하지 않는다
       const key = e.what + e.detail

@@ -67,6 +67,19 @@ describe('화면 숫자로 개수 정하기', () => {
     expect([sc2.dots, sc2.swaps, sc2.unsure]).toEqual([4, 3, false])
   })
 
+  test('방금 점 찍기를 얻었으면, 틀린 기억 때문에 합이 안 맞아도 바꿔 뽑기는 그대로 두고 점 찍기를 올린다 (기록 17:55: ⇄0이 ⇄1로 되던 문제)', () => {
+    const sc = new ScreenCounts()
+    feed(sc, reads(gl(5), gl(0), gl(5)))
+    // 점 찍기 6 모양을 전에 5로 잘못 기억해 뒀다 (확실하다고까지). 보유 6 모양도 확실히 안다
+    sc.memory.dots.push({ f: gl(6).f, digit: 5, ctx: ['a', 'b'] })
+    sc.memory.held.push({ f: gl(6).f, digit: 6, ctx: ['a', 'b'] })
+    // 아이콘 줄을 지워 점 찍기를 얻었다 (판에서 본 사실). 화면: 점 찍기 6 · 바꿔 뽑기 0 · 보유 6
+    for (let i = 0; i < 3; i++) sc.feed(reads(gl(6), gl(0), gl(6)), false, 3, 'dots')
+    expect([sc.dots, sc.swaps]).toEqual([6, 0])
+    // 틀린 기억은 그 자리에서 고쳐진다
+    expect(sc.memory.dots.find((e) => e.f[6] === 10)?.digit).toBe(6)
+  })
+
   test('못 정하면 값을 바꾸지 않고 모름만 알린다', () => {
     const sc = new ScreenCounts()
     feed(sc, reads(gl(3), gl(2), gl(5)))

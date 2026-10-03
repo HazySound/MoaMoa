@@ -235,3 +235,21 @@ describe('쌓아 둔 줄을 깨지 않는다 (실제 화면 로직.png)', () => 
     }
   }, 30_000)
 })
+
+describe('더미를 하나 더 만들면 잠재력이 는다', () => {
+  test('2줄 더미 둘은 하나보다 값이 크다 (더미별 합산 — 포화되면 더 쌓을 보람이 없다)', async () => {
+    const { multiPotential } = await import('../src/lib/core/solver')
+    const w = defaultWeights(1)
+    const one = parseBoard(`
+      .#########
+      .#########`)
+    const two = parseBoard(`
+      .#########
+      .#########
+      ..........
+      ..........
+      #########.
+      #########.`)
+    expect(multiPotential(two, w)).toBeGreaterThan(multiPotential(one, w) * 1.6)
+  })
+})

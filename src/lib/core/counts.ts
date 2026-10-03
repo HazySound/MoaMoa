@@ -74,7 +74,15 @@ export class ScreenCounts {
   /**
    * hint: 최근에 얻은 능력 종류. 꽉 찼는데 버튼 숫자로 못 정하면 모자란 만큼 이쪽에 더한다
    */
-  feed(r: GlyphReads, full: boolean, need: number, hint: 'dots' | 'swaps' = 'dots'): CountEvent[] {
+  /** 방금(몇 초 안에) 판에서 아이콘 줄을 지워 얻은 능력 종류. 합을 맞출 때 '이쪽이 늘었다'는 근거가 된다 */
+  private recentGain: 'dots' | 'swaps' | null = null
+
+  /**
+   * hint: 최근에 얻은 능력 종류 (null이면 최근 획득 없음). 꽉 찼는데 못 정하면 모자란 만큼 이쪽에 더하고,
+   * 합을 맞출 때는 '이쪽이 늘고 다른 쪽은 그대로'인 가정을 먼저 본다 (틀린 기억보다 판에서 본 사실이 먼저다)
+   */
+  feed(r: GlyphReads, full: boolean, need: number, hint: 'dots' | 'swaps' | null = null): CountEvent[] {
+    this.recentGain = hint
     const ev: CountEvent[] = []
     const step = (name: SpotName, g: Glyph | null) => {
       const s = this.slots[name]
@@ -107,12 +115,12 @@ export class ScreenCounts {
     if (h.cur === FULL && h.n >= need && !this.countsFresh && this.dots !== null && this.swaps !== null && this.dots + this.swaps < 7) {
       if (++this.fullStuck >= need * 3) {
         const gap = 7 - this.dots - this.swaps
-        if (hint === 'dots') this.dots += gap
+        if ((hint ?? 'dots') === 'dots') this.dots += gap
         else this.swaps += gap
         this.unsure = false
         this.countsFresh = true
         this.fullStuck = 0
-        ev.push({ what: '꽉 참에 맞춤', detail: `${hint === 'dots' ? '점 찍기' : '바꿔 뽑기'} +${gap} → 점 찍기 ${this.dots} · 바꿔 뽑기 ${this.swaps} (버튼 숫자: ${d.cur ? '짐작 ' + d.cur.guess : '못 읽음'} · ${s.cur ? '짐작 ' + s.cur.guess : '못 읽음'})` })
+        ev.push({ what: '꽉 참에 맞춤', detail: `${(hint ?? 'dots') === 'dots' ? '점 찍기' : '바꿔 뽑기'} +${gap} → 점 찍기 ${this.dots} · 바꿔 뽑기 ${this.swaps} (버튼 숫자: ${d.cur ? '짐작 ' + d.cur.guess : '못 읽음'} · ${s.cur ? '짐작 ' + s.cur.guess : '못 읽음'})` })
       }
     } else this.fullStuck = 0
 
@@ -189,11 +197,13 @@ export class ScreenCounts {
       { who: 'held' as const, d: D.v, s: S.v, t: H.trust },
       { who: 'dots' as const, d: H.v - S.v, s: S.v, t: D.trust },
       { who: 'swaps' as const, d: D.v, s: H.v - D.v, t: S.trust },
-    ].filter((x) => x.t < 3 && x.d >= 0 && x.s >= 0 && x.d + x.s <= 7)
-      .map((x) => ({ ...x, odd: odd('dots', dg, x.d) + odd('swaps', sg, x.s), jump: jump(x.d, x.s) }))
-      .sort((a, b) => a.t - b.t || a.odd - b.odd || a.jump - b.jump)
+    // 확실하다고 기억한 쪽을 틀렸다고 하는 가정은 보통 버리지만, 방금 얻은 종류가 늘었다는 가정은 기억보다 판에서 본 사실이 먼저라 남긴다
+    ].filter((x) => (x.t < 3 || x.who === this.recentGain) && x.d >= 0 && x.s >= 0 && x.d + x.s <= 7)
+      // 방금 점 찍기를 얻었으면 바꿔 뽑기는 그대로여야 한다 (반대도). 어긋나는 가정은 기억이 아무리 확실해도 뒤로 민다
+      .map((x) => ({ ...x, hint: this.recentGain === 'dots' ? (x.s !== this.swaps ? 1 : 0) : this.recentGain === 'swaps' ? (x.d !== this.dots ? 1 : 0) : 0, odd: odd('dots', dg, x.d) + odd('swaps', sg, x.s), jump: jump(x.d, x.s) }))
+      .sort((a, b) => a.hint - b.hint || a.t - b.t || a.odd - b.odd || a.jump - b.jump)
     const best = hyps[0], second = hyps[1]
-    if (best && (!second || best.t < second.t || best.odd < second.odd || best.jump < second.jump)) {
+    if (best && (!second || best.hint < second.hint || best.t < second.t || best.odd < second.odd || best.jump < second.jump)) {
       if (best.who === 'held') {
         if (hg !== FULL) this.learn('held', hg!, best.d + best.s, `${best.d}+${best.s}`)
       } else {

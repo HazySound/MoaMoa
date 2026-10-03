@@ -184,12 +184,14 @@ export const W = {
    * potential은 1.2~2.5에서 모두 기본보다 나았고 그 자체로 생존도 늘렸다 (거의 찬 줄을 모아 두면 구멍도 덜 생긴다)
    *
    * 그 뒤 multiPotential을 '다음 조각 하나'가 아니라 '판 여유만큼 기다리는 동안 하나라도 올 확률'로 바꿨다 (값이 커진다).
-   * 같은 조건 8판: potential 0.8 → 93.3 · 68,165 · 23% / 1.0 → 88.8 · 64,547 / 1.5 → 100.0 · 73,718 · 24% (채택) / 2.5 → 73.3 · 52,802
+   * 같은 조건 8판: potential 0.8 → 93.3 · 68,165 · 23% / 1.0 → 88.8 · 64,547 / 1.5 → 100.0 · 73,718 · 24% / 2.5 → 73.3 · 52,802
+   * 다시 더미(줄 묶음)별로 따로 쳐서 합치게 바꿨다 (하나만 세면 2줄 자리 하나에 포화돼 더 쌓을 보람이 없었다):
+   *   potential 1.0 → 100.3 · 78,424 · 27% (3줄 44번, 채택) / 1.5 → 99.6 · 74,997 · 25% / 2.5 → 90.3 · 67,543 · 26%
    */
   near2: 20,
   near3: 0,
   single: 0,
-  potential: 1.5,
+  potential: 1.0,
 }
 
 /** 우물로 비워 둘 열 */
@@ -580,12 +582,14 @@ function potentialDraws(b: Board): number {
 export function multiPotential(b: Board, weights: Map<number, number>): number {
   const n = new Array<number>(ROWS)
   for (let r = 0; r < ROWS; r++) n[r] = popcount(~b[r] & FULL_ROW)
-  // 줄 수(2~5)별로, 그만큼 지울 수 있는 조각들의 확률 합
-  const byLines = [0, 0, 0, 0, 0, 0]
+  // 더미(한 번에 지워지는 줄 묶음)마다, 그걸 지울 수 있는 조각들의 확률 합. 조각 하나는 더미 하나에 한 번만 센다.
+  // 더미별로 따로 쳐서 합쳐야 더미를 하나 더 만들 때마다 값이 늘어 쌓게 된다
+  // (전에는 판 전체에서 하나만 세서 2줄 자리 하나만 있으면 포화돼 더 쌓을 보람이 없었다 — 사용자 지적 2026-10-03)
+  const groups = new Map<number, number>()
   for (const p of PIECES) {
     const w = weights.get(p.id) ?? 0
     if (!w) continue
-    let best = 0
+    const seen = new Set<number>()
     for (const s of PIECE_ORIENTS.get(p.id)!) {
       if (s.h < 2) continue
       for (let r = 0; r + s.h <= ROWS; r++) {
@@ -594,27 +598,26 @@ export function multiPotential(b: Board, weights: Map<number, number>): number {
         for (let i = 0; i < s.h; i++) if (n[r + i] >= 1 && n[r + i] <= 5) near++
         if (near < 2) continue
         for (let c = 0; c + s.w <= COLS; c++) {
-          let ok = true, k = 0
+          let ok = true, mask = 0
           for (let i = 0; i < s.h; i++) {
             const bits = s.rows[i] << c
             if (b[r + i] & bits) { ok = false; break }
-            if ((b[r + i] | bits) === FULL_ROW) k++
+            if ((b[r + i] | bits) === FULL_ROW) mask |= 1 << (r + i)
           }
-          if (ok && k >= 2 && k > best) best = k
+          if (ok && popcount(mask) >= 2 && !seen.has(mask)) { seen.add(mask); groups.set(mask, (groups.get(mask) ?? 0) + w) }
         }
       }
     }
-    if (best >= 2) byLines[Math.min(best, 5)] += w
   }
+  if (!groups.size) return 0
+  // 큰 더미부터 센다. 이미 센 더미에 포함되는 작은 더미(같은 줄들의 일부)는 또 세지 않는다
   const draws = potentialDraws(b)
-  let ev = 0, above = 0 // above: k+1줄 이상 되는 조각이 하나라도 올 확률
-  for (let k = 5; k >= 2; k--) {
-    const q = byLines[k]
-    if (!q) continue
-    const atLeast = 1 - (1 - Math.min(1, above + q)) ** draws
-    const pAbove = 1 - (1 - Math.min(1, above)) ** draws
-    ev += lineScore(k) * (atLeast - pAbove)
-    above += q
+  const sorted = [...groups].sort((x, y) => popcount(y[0]) - popcount(x[0]) || y[1] - x[1])
+  let ev = 0, covered = 0
+  for (const [mask, q] of sorted) {
+    if ((mask & covered) === mask) continue
+    ev += lineScore(popcount(mask)) * (1 - (1 - Math.min(1, q)) ** draws)
+    covered |= mask
   }
   return ev
 }
