@@ -173,9 +173,12 @@
       <IconAlert class="size-4 shrink-0" />{engine.error}
     </div>
   {/if}
-  {#each engine.notices as n (n.t)}
-    <div class="mb-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm text-amber-200" transition:slide>{n.text}</div>
-  {/each}
+  <!-- 화면 숫자로 바로잡은 값. 떠 있는 토스트라 화면을 밀지 않는다 -->
+  <div class="pointer-events-none fixed top-3 left-1/2 z-40 grid w-max max-w-[calc(100%-1rem)] -translate-x-1/2 gap-1.5">
+    {#each engine.notices as n (n.t)}
+      <div class="rounded-lg bg-amber-900/80 px-3 py-1.5 text-sm text-amber-100 shadow-lg backdrop-blur" transition:fly={{ y: -8, duration: 150 }}>{n.text}</div>
+    {/each}
+  </div>
 
   {#if !hasData}
     <!-- 처음 화면 -->

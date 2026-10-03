@@ -52,6 +52,21 @@ describe('화면 숫자로 개수 정하기', () => {
     expect([sc.dots, sc.swaps, sc.unsure]).toEqual([4, 3, false])
   })
 
+  test('꽉 찼는데 버튼 숫자를 못 읽거나 못 정하면, 최근에 얻은 쪽에 더해 7로 맞춘다 (게임 7개·도우미 5개로 멈추던 문제)', () => {
+    const sc = new ScreenCounts()
+    feed(sc, reads(gl(3), gl(2), gl(5)))
+    // 꽉 찼는데 버튼이 안 읽힌다 (예: 버튼이 반짝임)
+    const ev = []
+    for (let i = 0; i < 12; i++) ev.push(...sc.feed(reads(null, null, null), true, 3, 'swaps'))
+    expect([sc.dots, sc.swaps, sc.unsure]).toEqual([3, 4, false])
+    expect(ev.map((e) => e.what)).toEqual(['꽉 참에 맞춤'])
+    // 버튼이 읽히지만 짐작이 틀려 합이 안 맞으면, 꽉 참(7)이 확실하니 덜 믿는 쪽을 7에서 뺀 값으로 정한다
+    const sc2 = new ScreenCounts()
+    feed(sc2, reads(gl(3), gl(2), gl(5)))
+    for (let i = 0; i < 12; i++) sc2.feed(reads(gl(4, 7), gl(3), null), true, 3, 'dots')
+    expect([sc2.dots, sc2.swaps, sc2.unsure]).toEqual([4, 3, false])
+  })
+
   test('못 정하면 값을 바꾸지 않고 모름만 알린다', () => {
     const sc = new ScreenCounts()
     feed(sc, reads(gl(3), gl(2), gl(5)))

@@ -92,7 +92,7 @@ class Engine {
   private log(what: string, detail = '') {
     // 능력 개수가 어긋난 원인을 한 판 단위로 되짚을 수 있게 넉넉히 남긴다 (30개로는 몇 세트밖에 안 됐다)
     this.events = [{ t: Date.now(), what, detail }, ...this.events].slice(0, 400)
-    if (what === '화면 숫자' || what === '화면 줄 수' || what === '합으로 알아냄' || what === '아이콘 칸 바로잡음') this.notify(`${what}: ${detail.split(' · ')[0]}`)
+    if (what === '화면 숫자' || what === '화면 줄 수' || what === '합으로 알아냄' || what === '아이콘 칸 바로잡음' || what === '꽉 참에 맞춤') this.notify(`${what}: ${detail.split(' · ')[0]}`)
     try { localStorage.setItem(EVENTS_KEY, JSON.stringify(this.events)) } catch { /* 이번 창에서만 남는다 */ }
   }
 
@@ -277,7 +277,7 @@ class Engine {
   private async tick() {
     const src = this.source
     if (!src) return
-    if (this.notices.length && this.notices[0].t < Date.now() - 8000) this.notices = this.notices.filter((n) => n.t >= Date.now() - 8000)
+    if (this.notices.length && this.notices[0].t < Date.now() - 5000) this.notices = this.notices.filter((n) => n.t >= Date.now() - 5000)
     if (!this.grid) {
       const full = await src.grab()
       if (!full) return
@@ -384,7 +384,9 @@ class Engine {
   /** 화면 숫자로 개수를 맞춘다. full: 보유 칸이 '능력이 가득 찼습니다'로 바뀌어 있다 */
   private syncNumbers(r: GlyphReads, full: boolean, live: boolean) {
     this.lastWhy = r.why
-    for (const e of this.screen.feed(r, full, live ? 3 : 1)) {
+    // 최근 20초 안에 얻은 능력 종류. 꽉 찼는데 버튼 숫자로 못 정하면 그쪽에 더한다
+    const hint = Date.now() - this.lastGain.at < 20_000 ? this.lastGain.kind : 'dots'
+    for (const e of this.screen.feed(r, full, live ? 3 : 1, hint)) {
       // 같은 화면이 깜빡일 때마다 같은 말을 되풀이하지 않는다
       const key = e.what + e.detail
       if (key !== this.lastScreenEvent) { this.lastScreenEvent = key; this.log(e.what, e.detail) }
@@ -456,6 +458,8 @@ class Engine {
   /** 화면 숫자로 개수를 한 번 맞춘 뒤다 (처음 맞출 때 값이 커지는 건 능력을 얻은 게 아니다) */
   private numsSettled = false
   private lastWhy: Record<string, string> = {}
+  /** 마지막으로 얻은 능력 종류와 때 */
+  private lastGain: { kind: 'dots' | 'swaps'; at: number } = { kind: 'dots', at: 0 }
 
   /** 백업·내보내기에 쓰는 통계 묶음. 화면은 없고 조각 횟수·판 기록·설정뿐이다 */
   snapshot() {
@@ -772,6 +776,7 @@ class Engine {
           if (ic.kind === 'dot') this.dots++
           else this.swaps++
         }
+        this.lastGain = { kind: ic.kind === 'dot' ? 'dots' : 'swaps', at: Date.now() }
         this.log('능력 획득', `↓${Math.floor(idx / COLS) + 1} →${(idx % COLS) + 1} ${ic.kind === 'dot' ? '점 찍기' : '바꿔 뽑기'} → ◎${this.dots} ⇄${this.swaps}`)
       }
       this.publishIcons()

@@ -83,3 +83,14 @@ describe('못 읽은 칸', () => {
     expect(m?.board[15]).toBe(0b111)
   })
 })
+
+describe('화면 공유에서 잘라 읽는 영역', () => {
+  test('위쪽 표시줄(판 위 -1.55칸)과 오른쪽 능력 칸(14.5칸)까지 들어간다 (전에는 위로 1칸만 잘라 줄 수를 못 읽었다)', async () => {
+    const { regionOf } = await import('../src/lib/capture')
+    const g = { x: 100, y: 300, pitch: 40 }
+    const r = regionOf(g)
+    expect(r.y).toBeLessThanOrEqual(g.y - 1.6 * g.pitch)
+    expect(r.x + r.w).toBeGreaterThanOrEqual(g.x + 14.6 * g.pitch)
+    expect(r.y + r.h).toBeGreaterThanOrEqual(g.y + 16 * g.pitch)
+  })
+})

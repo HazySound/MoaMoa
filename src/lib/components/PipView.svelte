@@ -95,10 +95,12 @@
     <span class="ml-auto text-ink-400">다음 능력 <b class="text-ink-100">{engine.nextAbility ?? '?'}</b>번{#if engine.nextUnsure}<span class="unsure ml-1" title="새 아이콘이 나오면 자동으로 맞춰요">?</span>{/if}</span>
   </div>
 
-  {#each engine.notices as n (n.t)}
-    <!-- 화면 숫자로 바로잡은 값. 틀렸으면 아래 설정에서 바로 고칠 수 있게 보여 준다 -->
-    <div class="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200" transition:slide={{ duration: 150 }}>{n.text}</div>
-  {/each}
+  <!-- 화면 숫자로 바로잡은 값. 판 위에 떠 있는 토스트라 판 크기를 밀지 않는다. 틀렸으면 아래 설정에서 고친다 -->
+  <div class="toasts">
+    {#each engine.notices as n (n.t)}
+      <div class="toast" transition:fly={{ y: -8, duration: 150 }}>{n.text}</div>
+    {/each}
+  </div>
   {#if engine.heldMismatch}
     <div class="rounded-xl border border-s2/40 bg-s2/10 px-3 py-2 text-xs text-ink-100">
       {engine.gameFull ? `게임은 능력이 꽉 찼는데(7/7) 도우미는 ${engine.held}개로 알고 있어요. 아래 설정에서 개수를 맞춰 주세요.` : `게임은 능력 자리가 남았는데 도우미는 7개로 알고 있어요. 개수를 맞춰 주세요.`}
@@ -190,6 +192,8 @@
   }
   .abil b { font-family: var(--font-mono); font-weight: 600; }
   .abil .full { color: var(--color-s3); }
+  .toasts { position: fixed; top: 0.5rem; left: 50%; transform: translateX(-50%); z-index: 40; display: grid; gap: 0.3rem; pointer-events: none; width: max-content; max-width: calc(100% - 1rem); }
+  .toast { padding: 0.35rem 0.7rem; border-radius: 0.6rem; font-size: 0.72rem; color: rgb(254 243 199); background: rgb(120 53 15 / 0.8); backdrop-filter: blur(4px); box-shadow: 0 4px 16px rgb(0 0 0 / 0.3); }
   .unsure {
     display: inline-grid; place-items: center; width: 1rem; height: 1rem; border-radius: 999px;
     font: 700 0.65rem/1 var(--font-mono); color: var(--color-ink-950); background: var(--color-s2);

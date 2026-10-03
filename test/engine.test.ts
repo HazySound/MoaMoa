@@ -512,6 +512,27 @@ describe('능력 개수는 게임 화면 숫자가 기준', () => {
     }
   })
 
+  test('화면 공유처럼 판 주변만 잘라 넣어도 버튼 숫자와 줄 수를 읽는다 (잘린 영역이 버튼 숫자·표시줄을 빼먹던 문제)', async () => {
+    const { regionOf } = await import('../src/lib/capture')
+    const a = frame('count-off.png')
+    const img = a.frame.image, R = regionOf(a.grid)
+    const x0 = Math.max(0, Math.floor(R.x)), y0 = Math.max(0, Math.floor(R.y))
+    const w = Math.min(img.width - x0, Math.ceil(R.w)), h = Math.min(img.height - y0, Math.ceil(R.h))
+    const data = new Uint8Array(w * h * 4)
+    for (let y = 0; y < h; y++) data.set(img.data.subarray(((y0 + y) * img.width + x0) * 4, ((y0 + y) * img.width + x0 + w) * 4), y * w * 4)
+    const cropped = { image: { width: w, height: h, data }, ox: x0, oy: y0 }
+    const local = { x: a.grid.x - x0, y: a.grid.y - y0, pitch: a.grid.pitch }
+    engine.reset()
+    engine.capturing = true
+    try {
+      for (let i = 0; i < 4; i++) engine.ingest(cropped, local, true)
+      await flush()
+      expect([engine.dots, engine.swaps, engine.nextAbility, engine.lines]).toEqual([3, 2, 2, 77])
+    } finally {
+      engine.capturing = false
+    }
+  })
+
   test('실제 캡처(능력 꽉 참): 버튼 1 + 6을 읽는다', async () => {
     engine.reset()
     feed('full.png', 3)

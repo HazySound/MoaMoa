@@ -68,7 +68,13 @@ export class ScreenCounts {
    * 프레임 하나의 숫자 모양을 넣는다. 같은 모양이 need번 이어져야 본다 (숫자가 바뀌는 중·커서가 지나가는 중 방지).
    * full: 보유 칸이 '능력이 가득 찼습니다'(주황)로 바뀌어 있다 = 보유 7
    */
-  feed(r: GlyphReads, full: boolean, need: number): CountEvent[] {
+  /** 꽉 참인데 버튼 숫자가 7에 안 맞는 프레임이 이어진 수 */
+  private fullStuck = 0
+
+  /**
+   * hint: 최근에 얻은 능력 종류. 꽉 찼는데 버튼 숫자로 못 정하면 모자란 만큼 이쪽에 더한다
+   */
+  feed(r: GlyphReads, full: boolean, need: number, hint: 'dots' | 'swaps' = 'dots'): CountEvent[] {
     const ev: CountEvent[] = []
     const step = (name: SpotName, g: Glyph | null) => {
       const s = this.slots[name]
@@ -96,6 +102,19 @@ export class ScreenCounts {
         this.countsFresh = this.solved.ok
       }
     }
+    // 게임이 '능력이 가득 찼습니다'(주황)를 띄웠으면 7개인 게 확실하다. 버튼 숫자를 못 읽거나 못 정해서 합이 7이 안 되면
+    // 모자란 만큼 최근에 얻은 쪽에 더해 7로 맞춘다. 전에는 "안 맞아요, 맞춰 주세요"라고만 하고 5개로 두었다
+    if (h.cur === FULL && h.n >= need && !this.countsFresh && this.dots !== null && this.swaps !== null && this.dots + this.swaps < 7) {
+      if (++this.fullStuck >= need * 3) {
+        const gap = 7 - this.dots - this.swaps
+        if (hint === 'dots') this.dots += gap
+        else this.swaps += gap
+        this.unsure = false
+        this.countsFresh = true
+        this.fullStuck = 0
+        ev.push({ what: '꽉 참에 맞춤', detail: `${hint === 'dots' ? '점 찍기' : '바꿔 뽑기'} +${gap} → 점 찍기 ${this.dots} · 바꿔 뽑기 ${this.swaps} (버튼 숫자: ${d.cur ? '짐작 ' + d.cur.guess : '못 읽음'} · ${s.cur ? '짐작 ' + s.cur.guess : '못 읽음'})` })
+      }
+    } else this.fullStuck = 0
 
     this.nextFresh = false
     const n = this.slots.next
