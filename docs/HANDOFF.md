@@ -69,7 +69,12 @@ src/lib/core/solver.ts    추천 엔진: 빔 탐색 + 다음 세트 가상 플�
                           능력 쓰기(rescue / abilityAdvice, 기준 ADV)
 src/lib/core/track.ts     판 변화를 '어떤 조각을 어디에 놓았다'로 풀기(explainMove, 못 읽은 칸은 와일드카드)
 src/lib/core/stats.ts     실제 조각 빈도 기록·섞기(blendedWeights), 판 기록(GameLog)
-src/lib/vision/read.ts    판 위치 찾기(detectGrid), 칸 읽기(readCell), 카드 읽기(readCard), 능력 꽉 참(readAbilityFull)
+src/lib/vision/read.ts    판 위치 찾기(detectGrid), 칸 읽기(readCell), 아이콘 밑 판별(underOf), 카드 읽기(readCard), 능력 꽉 참(readAbilityFull)
+src/lib/vision/digits.ts  숫자 모양 자르기·획 구조로 0~9 짐작(guessDigit). 오른쪽 '보유 능력' 칸 네 자리(readGlyphs)
+src/lib/vision/topbar.ts  위쪽 '점수'·'제거한 줄 수'·'최고 점수' 읽기 (readTopBar)
+src/lib/core/counts.ts    화면 숫자 모양으로 능력 개수 정하기 (검산·합으로 알아내기·모양 기억)
+src/lib/backup.svelte.ts  통계 자동 백업 (worker/index.ts의 KV로, 브라우저 id별)
+worker/index.ts           /api/stats/<id> PUT·GET만 받는 작은 워커. 나머지는 정적 사이트
 src/lib/capture.ts        화면 공유 프레임 (ImageCapture.grabFrame, 판 주변만 잘라 읽음)
 src/lib/engine.svelte.ts  읽기 → 추적 → 추천을 잇는 상태 (아래 4절)
 src/lib/solver.worker.ts  추천 계산 워커 (진행률 보고)
@@ -83,7 +88,10 @@ docs/data/                실제 플레이 조각 통계 스냅샷
 scripts/sim-parallel.sh   가상 플레이 병렬 실험
 ```
 
-화면 처리는 전부 브라우저 안에서 한다. 서버로 보내는 것 없음.
+화면 처리는 전부 브라우저 안에서 한다. 서버로 가는 건 **통계 백업뿐**이다 (2026-10-03, 사용자 요청): 조각 횟수·판 기록·설정을
+`PUT /api/stats/<브라우저 id>`로 KV(STATS)에 올린다. 화면은 안 간다.
+저장된 걸 보려면 `npx wrangler kv key list --binding STATS`, `npx wrangler kv key get --binding STATS <id>`. 또는 `curl https://moamoa.cemigs1.workers.dev/api/stats/<id>`.
+브라우저 id는 통계 패널 아래에 보인다. 백업 전 데이터는 Chrome Profile 1의 localStorage(leveldb)에서 직접 꺼낸 적이 있다.
 
 ---
 
@@ -189,10 +197,13 @@ scripts/sim-parallel.sh   가상 플레이 병렬 실험
 - 3줄 이상 연속 제거는 고른 확률에선 거의 안 생긴다 (한 열 우물을 채우는 조각이 ㅣ·ㅡ뿐)
 - 50만 점은 세트당 약 3,000점(5줄 연속 위주)이면 170세트, 한 줄씩이면 830세트가 필요
 
-### 실제 조각 빈도 (docs/data/piece-stats-2026-10-02.json)
-1단계 147개 기준, 종류당 평균: 1칸 10.2% · 3칸 7.5% · 4칸 7.8% · 5칸 7.8% · 6칸 3.4% · 7칸 5.8% · 8칸 4.1% · 9칸 2.7% · 10칸 1.4%.
-고른 확률(5.3%)이 아니고 **5칸 이하가 큰 조각보다 약 2배** 자주 나온다 → '작은 조각 2배' 가정과 비슷.
-사용자 실제 기록: 기존 최고 14,053 → 도우미로 진행 중 판 29,182 (70줄, 49세트) 시점.
+### 실제 조각 빈도 (docs/data/piece-stats-2026-10-03.json, 두 PC 합산 870개)
+단계별 표본 219 / 114 / 81 / 87 / 369. 5칸 이하 비율 1단계 64% → 5단계 36%, 평균 칸 수 4.5 → 6.2.
+5단계 상위: ㅌ 13%, ㄷ 9%, ㄹ 9%, ㅊ 8%, ㅏ 8%. 세로로 꽂는 ㅣ·ㅡ·점은 합쳐 12%뿐이라 후반에는 한 열 우물(ㅣ로 5줄)이 비현실적이다.
+가상 플레이는 `REAL=1`로 이 빈도를 쓴다 (simlib weightsFor).
+
+사용자 실제 기록: 2026-10-03 새벽 **16만 점** 판 (215세트, 664조각, 1줄 276 · 2줄 48 · 3줄 3). 세트당 725점.
+2줄 제거는 횟수 15%로 점수 37%를 냈다. 기본 추천은 2줄 이상이 9%뿐이라 큰 단위 제거 항목(W.near2·near3·single·potential)을 넣었다.
 
 ---
 
