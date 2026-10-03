@@ -83,7 +83,7 @@ class Engine {
   events = $state<{ t: number; what: string; detail: string }[]>(loadEvents())
   /**
    * 화면 숫자로 값을 바로잡았을 때 몇 초간 띄우는 알림. 사용자가 보정된 값을 직접 보고 맞는지 확인할 수 있게
-   * (조용히 바꾸면 틀린 보정을 알아챌 길이 없다). 8초 뒤 tick에서 지운다
+   * (조용히 바꾸면 틀린 보정을 알아챌 길이 없다). 1.2초 뒤 tick에서 지운다
    */
   notices = $state<{ t: number; text: string }[]>([])
   private notify(text: string) {
@@ -277,7 +277,8 @@ class Engine {
   private async tick() {
     const src = this.source
     if (!src) return
-    if (this.notices.length && this.notices[0].t < Date.now() - 5000) this.notices = this.notices.filter((n) => n.t >= Date.now() - 5000)
+    // 1.2초면 눈에 들어온다. 길면 거슬린다 (사용자 요청)
+    if (this.notices.length && this.notices[0].t < Date.now() - 1200) this.notices = this.notices.filter((n) => n.t >= Date.now() - 1200)
     if (!this.grid) {
       const full = await src.grab()
       if (!full) return
