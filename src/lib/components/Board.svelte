@@ -19,6 +19,7 @@
     dot?: { r: number; c: number } | null
   } = $props()
 
+  // 계획이 점 찍기 단계까지 포함해 여섯 단계까지 늘어서 색은 돌려 쓴다 (전에는 4단계부터 색이 없어 조각이 안 보였다)
   const STEP_COLORS = ['var(--color-s1)', 'var(--color-s2)', 'var(--color-s3)']
 
   // 보여 줄 단계 직전의 판. 앞 단계에서 지워진 줄이 반영돼 있어야 겹쳐 보이지 않는다
@@ -74,12 +75,12 @@
         {#key `${focus}:${step?.r}:${step?.c}:${step?.shape.key}`}
           <div
             class="ghost"
-            style="--c:{STEP_COLORS[g]}"
+            style="--c:{STEP_COLORS[g % 3]}"
             in:scale={{ start: 0.4, duration: 380, delay: (r - (step?.r ?? 0)) * 35 + (c - (step?.c ?? 0)) * 20, easing: cubicOut }}
           ></div>
         {/key}
       {:else if l !== undefined}
-        <div class="later" style="--c:{STEP_COLORS[l]}" in:fade={{ duration: 200 }}>
+        <div class="later" style="--c:{STEP_COLORS[l % 3]}" in:fade={{ duration: 200 }}>
           <span>{l + 1}</span>
         </div>
       {/if}
@@ -87,7 +88,7 @@
         <span class="rescue" in:scale={{ start: 0.3, duration: 400, easing: cubicOut }}><IconDot /></span>
       {/if}
       {#if anchor && anchor[0] === r && anchor[1] === c}
-        <span class="pointer" style="--c:{STEP_COLORS[focus]}"><IconPointer /></span>
+        <span class="pointer" style="--c:{STEP_COLORS[focus % 3]}"><IconPointer /></span>
       {/if}
     </div>
   {/each}

@@ -87,7 +87,7 @@
     idle: '대기 중',
     searching: '게임판 찾는 중',
     live: '실시간 인식 중',
-    busy: '배치 미리보기 중',
+    busy: '인식 중',
     obscured: '판이 가려짐',
     image: '스크린샷 분석',
   }
@@ -239,7 +239,7 @@
                 class="step-tab"
                 class:active={focus === k}
                 class:done={k < engine.stepIdx}
-                style="--c:{STEP_COLORS[k]}"
+                style="--c:{STEP_COLORS[k % 3]}"
                 onclick={() => (focus = k)}
               >
                 <span class="num">{#if k < engine.stepIdx}<IconCheck class="size-3.5" />{:else}{k + 1}{/if}</span>
@@ -315,7 +315,7 @@
                 class="step panel"
                 class:now
                 class:done
-                style="--c:{STEP_COLORS[k]}"
+                style="--c:{STEP_COLORS[k % 3]}"
                 in:fly={{ x: 16, delay: k * 70, duration: 450, easing: cubicOut }}
               >
                 <button class="flex w-full items-center gap-4 p-4 text-left" onclick={() => (focus = k)}>

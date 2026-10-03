@@ -22,7 +22,7 @@
   const STEP_COLORS = ['var(--color-s1)', 'var(--color-s2)', 'var(--color-s3)']
   const PIECE_COLORS: Record<string, string> = { pink: '#f472b6', green: '#84cc16', blue: '#38bdf8', yellow: '#facc15' }
   const STATUS: Record<string, string> = {
-    idle: '대기', searching: '판 찾는 중', live: '인식 중', busy: '미리보기 중', obscured: '가려짐', image: '스크린샷',
+    idle: '대기', searching: '판 찾는 중', live: '인식 중', busy: '인식 중', obscured: '가려짐', image: '스크린샷',
   }
 
   let picked = $state<number | null>(null)
@@ -63,7 +63,7 @@
             class="dot"
             class:active={focus === k}
             class:done={k < engine.stepIdx}
-            style="--c:{STEP_COLORS[k]}"
+            style="--c:{STEP_COLORS[k % 3]}"
             aria-label="{k + 1}단계 보기"
             onclick={() => (picked = k)}
           >{#if k < engine.stepIdx}<IconCheck class="size-3" />{:else}{k + 1}{/if}</button>
@@ -139,7 +139,7 @@
     </div>
   {:else if step && !done}
     {#key `${engine.planIdx}:${focus}`}
-      <div class="now" style="--c:{STEP_COLORS[focus]}" in:fly={{ y: 10, duration: 350, easing: cubicOut }}>
+      <div class="now" style="--c:{STEP_COLORS[focus % 3]}" in:fly={{ y: 10, duration: 350, easing: cubicOut }}>
         <span class="badge">{focus + 1}</span>
         <div class="grid size-12 shrink-0 place-items-center rounded-lg bg-ink-900">
           <MiniShape shape={step.shape} color={pieceColor(step.slot)} cell={Math.min(9, Math.floor(40 / Math.max(step.shape.w, step.shape.h)) - 2)} />
