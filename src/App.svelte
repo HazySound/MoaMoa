@@ -107,8 +107,8 @@
     if (f) engine.loadImage(f)
   }
 
-  const pieceName = (i: number) => engine.hand[i]?.piece?.name ?? '?'
-  const pieceColor = (i: number) => PIECE_COLORS[engine.hand[i]?.piece?.color ?? ''] ?? 'var(--color-ink-300)'
+  const pieceName = (i: number) => (i < 0 ? '점 찍기' : engine.hand[i]?.piece?.name ?? '?')
+  const pieceColor = (i: number) => (i < 0 ? '#38bdf8' : PIECE_COLORS[engine.hand[i]?.piece?.color ?? ''] ?? 'var(--color-ink-300)')
 </script>
 
 <svelte:window
@@ -325,7 +325,7 @@
                   </div>
                   <div class="min-w-0 flex-1">
                     <p class="flex flex-wrap items-baseline gap-x-2 font-semibold">
-                      <span>{s.slot + 1}번 카드 ‘{pieceName(s.slot)}’</span>
+                      <span>{#if s.slot < 0}점 찍기 (게임 오른쪽 버튼 → 판의 칸 클릭){:else}{s.slot + 1}번 카드 ‘{pieceName(s.slot)}’{/if}</span>
                       <span class="text-xs font-normal text-ink-400">{s.shape.cells}칸</span>
                     </p>
                     <div class="mt-1.5 flex flex-wrap gap-1.5 text-xs">

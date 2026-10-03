@@ -253,3 +253,48 @@ describe('더미를 하나 더 만들면 잠재력이 는다', () => {
     expect(multiPotential(two, w)).toBeGreaterThan(multiPotential(one, w) * 1.6)
   })
 })
+
+describe('점 찍기를 넉넉히 들고 있으면 그걸로 메울 자리를 남기며 판을 짠다 (실제 화면 로직.png 둘째)', () => {
+  // 손에 ㅡ 하나, 점 찍기 5개. 8행 "#####..#.." 9행 "#######..."에서 점 찍기로 칸을 메워 큰 제거 자리를 만들 수 있다.
+  // 전에는 ㅡ를 9행 7~9열에 놓아 한 줄만 지우라고 했다
+  const board = parseBoard(`
+      ..........
+      .#.#.#.##.
+      ..........
+      ..........
+      ..........
+      .#........
+      ..........
+      ##........
+      #####..#..
+      #######...
+      ..........
+      ......#...
+      .....###..
+      ..........
+      ..........
+      .#.#.##.#.`)
+  const icons = [{ r: 5, c: 1, kind: 'swap' as const }, { r: 7, c: 9, kind: 'dot' as const }, { r: 15, c: 8, kind: 'swap' as const }]
+  test('한 줄 제거 대신 큰 제거 자리를 만들고, 점 찍기를 쓰는 계획이 손해가 아니다', async () => {
+    const { solve, ADV } = await import('../src/lib/core/solver')
+    const { blendedWeights } = await import('../src/lib/core/stats')
+    const { readFileSync } = await import('node:fs')
+    const counts = JSON.parse(readFileSync('docs/data/piece-stats-2026-10-03.json', 'utf8')).counts
+    const hand = [null, null, piece('ㅡ')]
+    const inp = { board, icons, hand, heldAbilities: 5, swaps: 0, dots: 5, weights: blendedWeights(counts, 4), style: 0.75, beam: 60 }
+    const { multiPotential } = await import('../src/lib/core/solver')
+    const withDots = solve(inp, 1)[0]
+    expect(withDots.steps.filter((s) => s.slot >= 0).length).toBe(1) // ㅡ는 꼭 놓는다
+    // 한 줄만 지우고 끝내지 않는다 (전에는 ㅡ를 9행 7~9열에 놓아 1줄)
+    const last = withDots.steps[withDots.steps.length - 1]
+    expect(last.cleared.length === 1 && withDots.steps.length === 1).toBe(false)
+    // 놓은 뒤의 판은 남는 점 찍기로 메워 큰 제거를 할 자리가 있다
+    expect(multiPotential(withDots.board, inp.weights, 3)).toBeGreaterThan(0)
+    const saved = ADV.planDots
+    ADV.planDots = false
+    try {
+      const without = solve(inp, 1)[0]
+      expect(withDots.value).toBeGreaterThanOrEqual(without.value)
+    } finally { ADV.planDots = saved }
+  }, 30_000)
+})

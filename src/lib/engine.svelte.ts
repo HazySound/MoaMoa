@@ -806,9 +806,15 @@ class Engine {
     this.board = B
     this.updatedAt = Date.now()
     if (mv.slot < 0) {
-      // 점 찍기를 썼다
+      // 점 찍기를 썼다. 계획에 있던 점 찍기 단계 그대로면 다음 단계로 넘어가고, 아니면 다시 계산한다
       this.markUsed('dots')
       this.log('점 찍기 사용', `→ ◎${this.dots} ⇄${this.swaps}`)
+      const dotStep = this.plan?.steps[this.stepIdx]
+      if (!this.solving && dotStep && dotStep.slot < 0 && boardKey(dotStep.boardAfter) === boardKey(B)) {
+        this.stepIdx++
+        this.log('추천대로 놓음', `${this.stepIdx}단계 (점 찍기)`)
+        return
+      }
       this.requestSolve('점 찍기를 써서')
       return
     }
@@ -1067,6 +1073,7 @@ class Engine {
 
   /** 지금 화면에 보이는 카드 모양에서 목표 모양까지의 버튼 조작 */
   turnsFor(step: Step): { flip: boolean; rot: number; ok: boolean } | null {
+    if (step.slot < 0) return { flip: false, rot: 0, ok: true }
     const cur = this.hand[step.slot]?.shape
     if (!cur) return null
     const o = orientations(cur).find((x) => x.shape.key === step.shape.key)

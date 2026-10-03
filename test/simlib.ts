@@ -89,6 +89,8 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
             const r = place(board, st.shape, st.r, st.c, icons, swaps + dots)
             board = r.board; icons = r.icons; score += r.gained; lines += r.cleared.length; give(r.abilities)
             combos[Math.min(5, r.cleared.length)]++
+            // 계획 안의 점 찍기 단계
+            if (st.slot < 0) { dots--; usedAbil++; continue }
             hand[st.slot] = null
             // 7개를 들고 있으면 아이콘이 생기지 않고 카운트도 멈춘다
             if (swaps + dots < 7 && ++placed % 7 === 0) spawn()

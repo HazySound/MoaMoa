@@ -45,8 +45,8 @@
   // 단계가 넘어가면 직접 고른 단계 보기를 풀고 지금 단계로 돌아온다
   $effect(() => { void engine.stepIdx; void engine.planIdx; picked = null })
 
-  const pieceName = (i: number) => engine.hand[i]?.piece?.name ?? '?'
-  const pieceColor = (i: number) => PIECE_COLORS[engine.hand[i]?.piece?.color ?? ''] ?? 'var(--color-ink-300)'
+  const pieceName = (i: number) => (i < 0 ? '점 찍기' : engine.hand[i]?.piece?.name ?? '?')
+  const pieceColor = (i: number) => (i < 0 ? '#38bdf8' : PIECE_COLORS[engine.hand[i]?.piece?.color ?? ''] ?? 'var(--color-ink-300)')
 </script>
 
 <div class="flex h-dvh flex-col gap-2.5 bg-ink-950 p-2.5 text-ink-100 select-none">
@@ -145,7 +145,7 @@
           <MiniShape shape={step.shape} color={pieceColor(step.slot)} cell={Math.min(9, Math.floor(40 / Math.max(step.shape.w, step.shape.h)) - 2)} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="truncate text-sm font-semibold">{step.slot + 1}번 카드 ‘{pieceName(step.slot)}’</p>
+          <p class="truncate text-sm font-semibold">{#if step.slot < 0}점 찍기 → 판 ↓{step.r + 1}행 →{step.c + 1}열{:else}{step.slot + 1}번 카드 ‘{pieceName(step.slot)}’{/if}</p>
           <div class="mt-1 flex flex-wrap gap-1 text-[11px]">
             {#if focus < engine.stepIdx}
               <span class="chip">놓음</span>

@@ -83,9 +83,21 @@ interface State {
   held: number
   steps: Step[]
   quick: number
+  /** 이 계획에서 쓴 점 찍기 수 */
+  dotsUsed: number
 }
 
+/** slot -1이면 점 찍기 */
 interface Cand { pi: number; slot: number; oi: number; r: number; c: number; quick: number }
+
+const DOT_SHAPE: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
+
+/**
+ * 아이콘 줄을 지워 능력을 얻는 배치에 얹는 가중치 (게임 점수가 아니다). 능력의 진짜 값어치는 그걸로 뭘 하느냐에서
+ * 나오고 그건 계획 안의 점 찍기 단계·잠재력이 따로 계산한다. 여기서는 '위기에서 판을 살릴 여분'만 친다:
+ * 하나도 없으면 900, 많이 들고 있으면 250 (사용자 지적 2026-10-03: 들고만 있는 능력이 900점일 리 없다)
+ */
+const abilityWorth = (held: number) => Math.max(250, 900 - 150 * held)
 
 const BEAM = 160
 const FINAL = 48
@@ -312,7 +324,7 @@ function finalEval(st: State, inp: SolveInput, remaining: number): { value: numb
   const o = outlook(st.board, inp.weights)
   const danger = 9000 + (1 - inp.style) * 26000
   let value = st.gained + quickEval(st.board, inp.style) + o.flex * 600 - o.risk * danger - o.stuck * 120
-  if (W.potential) value += W.potential * scoreMul(inp.style) * multiPotential(st.board, inp.weights)
+  if (W.potential) value += W.potential * scoreMul(inp.style) * multiPotential(st.board, inp.weights, spareDotsAfter(inp, st.dotsUsed))
   // 다 못 놓은 조각이 있으면 그 판은 끝난다
   value -= remaining * 100000
   return { value, o }
@@ -323,62 +335,78 @@ function finalEval(st: State, inp: SolveInput, remaining: number): { value: numb
 function searchPlans(inp: SolveInput, topN: number): Plan[] {
   const slots = inp.hand.map((s, i) => [i, s] as const).filter((x): x is readonly [number, Shape] => x[1] !== null)
   const orients = new Map(slots.map(([i, s]) => [i, orientations(s)]))
-  const start: State = { board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0 }
+  const start: State = { board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0, dotsUsed: 0 }
+  const allUsed = slots.reduce((m, [i]) => m | (1 << i), 0)
+  // 점 찍기를 넉넉히 들고 있으면(위기용 keepDots개는 남기고) 계획 안에 점 찍기 단계를 넣는다.
+  // 전에는 능력을 '막혔을 때 살리기'로만 써서, 점 찍기 5개를 쥐고도 두 칸 메워 큰 제거 자리를 만드는 수를 못 봤다 (2026-10-03 사용자 지적)
+  const dotBudget = ADV.planDots ? Math.max(0, Math.min(ADV.planDotsMax, (inp.dots ?? 0) - ADV.keepDots)) : 0
+  const dotOrient = { shape: DOT_SHAPE, flip: false, rot: 0 }
 
   let beam: State[] = [start]
   const finished: State[] = []
-  for (let depth = 0; depth < slots.length; depth++) {
+  for (let depth = 0; depth < slots.length + dotBudget; depth++) {
     // 자식 판은 수십만 개가 나온다. 먼저 가벼운 기록만 남기고, 빔에 들어간 것만 실제 상태로 만든다
     const best = new Map<string, Cand>()
     const scratch = new Array<number>(ROWS)
     beam.forEach((st, pi) => {
       let expanded = false
       const doneAbilities = st.steps.reduce((a, x) => a + x.abilities, 0)
+      // 조각을 다 놓은 계획은 그 자체로 답이 될 수 있다 (점 찍기를 더 쓰는 건 선택이다)
+      if (st.used === allUsed) finished.push(st)
+      const tryPlace = (slot: number, s: Shape, oi: number, r: number, c: number, cost: number) => {
+        for (let i = 0; i < s.h; i++) if (st.board[r + i] & (s.rows[i] << c)) return
+        expanded = true
+        for (let k = 0; k < ROWS; k++) scratch[k] = st.board[k]
+        let lines = 0, clearedMask = 0
+        for (let i = 0; i < s.h; i++) {
+          scratch[r + i] |= s.rows[i] << c
+          if (scratch[r + i] === FULL_ROW) { lines++; clearedMask |= 1 << (r + i) }
+        }
+        let got = 0
+        if (lines) {
+          for (let k = 0; k < ROWS; k++) if (clearedMask & (1 << k)) scratch[k] = 0
+          for (const ic of st.icons) if (clearedMask & (1 << ic.r) && st.held + got < ABILITY_CAP) got++
+        }
+        const gained = s.cells + lineScore(lines) + got * ABILITY_SCORE
+        let quick = st.gained + gained + (doneAbilities + got) * abilityWorth(st.held) + quickEval(scratch, inp.style) - cost
+        if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask) * scoreMul(inp.style)
+        const key = boardKey(scratch) + (slot < 0 ? st.used : st.used | (1 << slot))
+        const prev = best.get(key)
+        if (!prev || prev.quick < quick) best.set(key, { pi, slot, oi, r, c, quick })
+      }
       for (const [slot] of slots) {
         if (st.used & (1 << slot)) continue
         orients.get(slot)!.forEach((o, oi) => {
           const s = o.shape
-          for (let r = 0; r + s.h <= ROWS; r++) for (let c = 0; c + s.w <= COLS; c++) {
-            let ok = true
-            for (let i = 0; i < s.h; i++) if (st.board[r + i] & (s.rows[i] << c)) { ok = false; break }
-            if (!ok) continue
-            expanded = true
-            for (let k = 0; k < ROWS; k++) scratch[k] = st.board[k]
-            let lines = 0, clearedMask = 0
-            for (let i = 0; i < s.h; i++) {
-              scratch[r + i] |= s.rows[i] << c
-              if (scratch[r + i] === FULL_ROW) { lines++; clearedMask |= 1 << (r + i) }
-            }
-            let got = 0
-            if (lines) {
-              for (let k = 0; k < ROWS; k++) if (clearedMask & (1 << k)) scratch[k] = 0
-              for (const ic of st.icons) if (clearedMask & (1 << ic.r) && st.held + got < ABILITY_CAP) got++
-            }
-            const gained = s.cells + lineScore(lines) + got * ABILITY_SCORE
-            let quick = st.gained + gained + (doneAbilities + got) * 900 + quickEval(scratch, inp.style)
-            if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask) * scoreMul(inp.style)
-            const key = boardKey(scratch) + (st.used | (1 << slot))
-            const prev = best.get(key)
-            if (!prev || prev.quick < quick) best.set(key, { pi, slot, oi, r, c, quick })
-          }
+          for (let r = 0; r + s.h <= ROWS; r++) for (let c = 0; c + s.w <= COLS; c++) tryPlace(slot, s, oi, r, c, 0)
         })
+      }
+      if (st.dotsUsed < dotBudget) {
+        // 점 찍기는 거의 찬 줄(채움 ≥ planDotRowMin)의 빈칸에만 (그 밖은 조각으로 메우는 게 낫다). 쓴 점 찍기마다 비용을 뺀다
+        const cost = ADV.planDotCost * (st.dotsUsed + 1)
+        for (let r = 0; r < ROWS; r++) {
+          if (popcount(st.board[r]) < ADV.planDotRowMin) continue
+          for (let c = 0; c < COLS; c++) if (!((st.board[r] >> c) & 1)) tryPlace(-1, DOT_SHAPE, 0, r, c, cost)
+        }
       }
       if (!expanded) finished.push(st)
     })
     if (!best.size) break
     beam = [...best.values()].sort((a, b) => b.quick - a.quick).slice(0, inp.beam ?? BEAM).map((cd) => {
-      const o = orients.get(cd.slot)![cd.oi]
+      const o = cd.slot < 0 ? dotOrient : orients.get(cd.slot)![cd.oi]
       return expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp.style)
     })
   }
-  const complete = beam.filter((s) => s.steps.length === slots.length)
-  const pool = complete.length ? complete : [...beam, ...finished].sort((a, b) => b.steps.length - a.steps.length || b.quick - a.quick)
+  // 조각을 다 놓은 계획들 (마지막 빔 + 도중에 다 놓고 끝낸 것). 같은 걸 두 번 넣지 않는다
+  const seenDone = new Set<State>()
+  const complete = [...beam, ...finished].filter((s) => s.used === allUsed && !seenDone.has(s) && seenDone.add(s))
+  const pool = complete.length ? complete.sort((a, b) => b.quick - a.quick) : [...beam, ...finished].sort((a, b) => b.steps.length - a.steps.length || b.quick - a.quick)
 
   const scored = pool.slice(0, FINAL).map((st) => {
-    const { value, o } = finalEval(st, inp, slots.length - st.steps.length)
+    const { value, o } = finalEval(st, inp, slots.length - st.steps.filter((x) => x.slot >= 0).length)
     return {
       steps: st.steps, gained: st.gained, value, risk: o.risk, stuck: o.stuck,
-      incomplete: st.steps.length < slots.length, board: st.board,
+      incomplete: st.steps.filter((x) => x.slot >= 0).length < slots.length, board: st.board,
       abilityValue: st.steps.reduce((a, x) => a + x.abilities, 0) * 900, samples: 0,
     } satisfies Plan
   })
@@ -419,13 +447,15 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   }
   const step: Step = { slot, shape: s, flip, rot, r, c, cleared, gained, abilities: got, boardAfter: board, iconsAfter: icons }
   const total = st.gained + gained
-  // 능력 하나는 점수 50점보다 훨씬 값지다(다음 위기에서 판을 살린다)
-  const abilityBonus = got * 900
-  const acc = st.steps.reduce((a, x) => a + x.abilities, 0) * 900
+  const abilityBonus = got * abilityWorth(st.held)
+  const acc = st.steps.reduce((a, x) => a + x.abilities, 0) * abilityWorth(st.held)
+  const dotsUsed = st.dotsUsed + (slot < 0 ? 1 : 0)
+  // 쓴 점 찍기의 비용 (하나씩 더 쓸수록 비싸진다)
+  const dotCost = ADV.planDotCost * (dotsUsed * (dotsUsed + 1)) / 2
   return {
-    board, icons, used: st.used | (1 << slot), gained: total, held: st.held + got,
+    board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed,
     steps: [...st.steps, step],
-    quick: total + acc + abilityBonus + quickEval(board, style) - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
+    quick: total + acc + abilityBonus + quickEval(board, style) - dotCost - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
   }
 }
 
@@ -457,7 +487,7 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
   while (samples < 64 && (samples < 6 || now() < deadline)) {
     const set = [pick(table, rand), pick(table, rand), pick(table, rand)]
     cands.forEach((p, i) => {
-      const r = rollout(p.board, set, inp.style, inp.weights)
+      const r = rollout(p.board, set, inp.style, inp.weights, spareDotsAfter(inp, p.steps.filter((s) => s.slot < 0).length))
       if (r === null) deaths[i]++
       else sums[i] += r
     })
@@ -477,7 +507,12 @@ export function solve(inp: SolveInput, topN = 5, opts: SolveOptions = {}): Plan[
 }
 
 /** 판 위에서 세 조각을 작은 빔으로 놓아 본다. 다 못 놓으면 null */
-function rollout(board: Board, set: Shape[][], style: number, weights: Map<number, number>): number | null {
+/** 계획에서 점 찍기를 dotsUsed개 쓴 뒤에도 남는, 판 짜기에 쓸 수 있는 점 찍기 수 (위기용 keepDots개는 뺀다) */
+function spareDotsAfter(inp: SolveInput, dotsUsed: number): number {
+  return ADV.dotFill ? Math.max(0, Math.min(ADV.planDotsMax, (inp.dots ?? 0) - dotsUsed - ADV.keepDots)) : 0
+}
+
+function rollout(board: Board, set: Shape[][], style: number, weights: Map<number, number>, spareDots = 0): number | null {
   interface S { b: number[]; used: number; gained: number; q: number }
   let beam: S[] = [{ b: board, used: 0, gained: 0, q: 0 }]
   const scratch = new Array<number>(ROWS)
@@ -516,7 +551,7 @@ function rollout(board: Board, set: Shape[][], style: number, weights: Map<numbe
     if (!next.length) return null
     beam = next
   }
-  return beam[0].q + (W.potential ? W.potential * scoreMul(style) * multiPotential(beam[0].b, weights) : 0)
+  return beam[0].q + (W.potential ? W.potential * scoreMul(style) * multiPotential(beam[0].b, weights, spareDots) : 0)
 }
 
 // ─── 큰 단위 제거 ────────────────────────────────────────────────────────
@@ -579,13 +614,16 @@ function potentialDraws(b: Board): number {
  * 그걸 이겨서 쌓아 둔 줄을 깨라고 했다 (2026-10-03 사용자 지적). 두 세트 안에 올 확률(약 56%)로 보면 1,500점이다.
  * 2줄 1,200 · 3줄 2,700 · 4줄 4,800 · 5줄 7,500이라 큰 제거를 준비한 판이 크게 오른다
  */
-export function multiPotential(b: Board, weights: Map<number, number>): number {
+export function multiPotential(b: Board, weights: Map<number, number>, spareDots = 0): number {
   const n = new Array<number>(ROWS)
   for (let r = 0; r < ROWS; r++) n[r] = popcount(~b[r] & FULL_ROW)
   // 더미(한 번에 지워지는 줄 묶음)마다, 그걸 지울 수 있는 조각들의 확률 합. 조각 하나는 더미 하나에 한 번만 센다.
   // 더미별로 따로 쳐서 합쳐야 더미를 하나 더 만들 때마다 값이 늘어 쌓게 된다
-  // (전에는 판 전체에서 하나만 세서 2줄 자리 하나만 있으면 포화돼 더 쌓을 보람이 없었다 — 사용자 지적 2026-10-03)
-  const groups = new Map<number, number>()
+  // (전에는 판 전체에서 하나만 세서 2줄 자리 하나만 있으면 포화돼 더 쌓을 보람이 없었다 — 사용자 지적 2026-10-03).
+  // 조각을 놓고도 몇 칸 모자란 줄은 남는 점 찍기(spareDots)로 메워 같이 지울 수 있다. 그 점 찍기 비용은 뺀다.
+  // 그래야 "점 찍기로 두 칸 메워 두면 세로 조각 하나로 2줄"인 판을 짤 가치가 보인다
+  const groups = new Map<number, { q: number; dots: number }>()
+  const miss = new Array<number>(5)
   for (const p of PIECES) {
     const w = weights.get(p.id) ?? 0
     if (!w) continue
@@ -593,18 +631,32 @@ export function multiPotential(b: Board, weights: Map<number, number>): number {
     for (const s of PIECE_ORIENTS.get(p.id)!) {
       if (s.h < 2) continue
       for (let r = 0; r + s.h <= ROWS; r++) {
-        // 범위 안에 빈칸 1~5인 줄이 둘은 있어야 2줄을 지운다 (조각 한 줄의 폭은 5칸 이하)
+        // 범위 안에 빈칸 1~5+점 찍기인 줄이 둘은 있어야 2줄을 지운다 (조각 한 줄의 폭은 5칸 이하)
         let near = 0
-        for (let i = 0; i < s.h; i++) if (n[r + i] >= 1 && n[r + i] <= 5) near++
+        for (let i = 0; i < s.h; i++) if (n[r + i] >= 1 && n[r + i] <= 5 + spareDots) near++
         if (near < 2) continue
         for (let c = 0; c + s.w <= COLS; c++) {
-          let ok = true, mask = 0
+          let ok = true, mask = 0, k = 0
           for (let i = 0; i < s.h; i++) {
             const bits = s.rows[i] << c
             if (b[r + i] & bits) { ok = false; break }
-            if ((b[r + i] | bits) === FULL_ROW) mask |= 1 << (r + i)
+            const m = popcount(~(b[r + i] | bits) & FULL_ROW)
+            miss[i] = m
+            if (m === 0) { mask |= 1 << (r + i); k++ }
           }
-          if (ok && popcount(mask) >= 2 && !seen.has(mask)) { seen.add(mask); groups.set(mask, (groups.get(mask) ?? 0) + w) }
+          if (!ok) continue
+          // 모자란 칸이 적은 줄부터 점 찍기로 메운다
+          let dots = 0
+          if (spareDots > 0) {
+            for (let want = 1; want <= spareDots && dots + want <= spareDots; want++) {
+              for (let i = 0; i < s.h; i++) if (miss[i] === want && dots + want <= spareDots) { dots += want; mask |= 1 << (r + i); k++ }
+            }
+          }
+          if (k >= 2 && !seen.has(mask)) {
+            seen.add(mask)
+            const g = groups.get(mask)
+            if (g) { g.q += w; g.dots = Math.min(g.dots, dots) } else groups.set(mask, { q: w, dots })
+          }
         }
       }
     }
@@ -612,11 +664,13 @@ export function multiPotential(b: Board, weights: Map<number, number>): number {
   if (!groups.size) return 0
   // 큰 더미부터 센다. 이미 센 더미에 포함되는 작은 더미(같은 줄들의 일부)는 또 세지 않는다
   const draws = potentialDraws(b)
-  const sorted = [...groups].sort((x, y) => popcount(y[0]) - popcount(x[0]) || y[1] - x[1])
+  const sorted = [...groups].sort((x, y) => popcount(y[0]) - popcount(x[0]) || y[1].q - x[1].q)
   let ev = 0, covered = 0
-  for (const [mask, q] of sorted) {
+  for (const [mask, g] of sorted) {
     if ((mask & covered) === mask) continue
-    ev += lineScore(popcount(mask)) * (1 - (1 - Math.min(1, q)) ** draws)
+    const prize = lineScore(popcount(mask)) - ADV.planDotCost * g.dots
+    if (prize <= 0) continue
+    ev += prize * (1 - (1 - Math.min(1, g.q)) ** draws)
     covered |= mask
   }
   return ev
@@ -660,8 +714,6 @@ function hashBoard(b: Board): number {
 export type Rescue =
   | { kind: 'dot'; r: number; c: number; plan: Plan; proactive?: boolean; gain?: number }
   | { kind: 'swap'; slot: number; proactive?: boolean; gain?: number; room?: boolean }
-
-const DOT_SHAPE: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 
 /**
  * 세 조각을 다 놓을 수 없을 때 능력으로 살릴 길을 찾는다.
@@ -728,6 +780,21 @@ export const ADV = {
    * 무조건 쓰지는 않되 기회비용은 따진다). 점 찍기 후보도 한 칸 빈 줄만이 아니라 거의 찬 줄의 빈칸·못 메우는 구멍까지 본다
    */
   capCost: 0,
+  /**
+   * 계획 안의 점 찍기 (2026-10-03). 점 찍기를 keepDots개 넘게 들고 있으면 계획에 점 찍기 단계를 최대 planDotsMax개 넣는다.
+   * 자리는 거의 찬 줄(채움 ≥ planDotRowMin)의 빈칸. 하나 쓸 때마다 planDotCost × 순번의 비용을 뺀다
+   * (점 찍기가 많을수록 하나의 값어치는 낮다). 사용자: "점 찍기 5개 들고 있으면 두 칸 메워서 큰 제거 자리를 만들어야"
+   * 가상 플레이 8판(실제 빈도): 계획 단계로 미리 찍으면 74.3세트 · 55,276으로 생존이 크게 줄었다 (자리를 못 돌린다).
+   * 대신 dotFill(남는 점 찍기로 메울 자리를 잠재력에 넣기)만 켜면 98.9세트 · 76,791 · 2줄 226번으로 기본(100.3 · 78,424 · 210번)과
+   * 생존은 같고 큰 제거가 는다. 그래서 planDots는 끄고 dotFill만 켠다: 자리를 비워 두고 조각이 오면 점 찍기+조각으로 한 번에 턴다
+   */
+  planDots: false,
+  /** 잠재력을 셀 때 남는 점 찍기로 모자란 칸을 메울 수 있다고 본다 (계획 단계 planDots와 따로 켠다) */
+  dotFill: true,
+  keepDots: 2,
+  planDotsMax: 3,
+  planDotCost: 250,
+  planDotRowMin: 6,
   /** 꽉 찼을 때 점 찍기 후보를 거의 찬 줄의 빈칸·못 메우는 구멍까지 넓힌다 */
   capWide: false,
 }
