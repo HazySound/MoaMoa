@@ -173,11 +173,20 @@ export const W = {
    *  single:      옆줄이 거의 찼는데(빈칸 ≤3) 한 줄만 지우는 배치의 벌점 (같이 지울 수 있었다)
    *  potential:   다음 조각 하나로 2줄 이상 지울 수 있는 자리의 기대 점수(조각 확률 가중)에 곱하는 비율.
    *               마지막 평가와 가상 플레이 끝에서 본다 (빠른 평가에서 쓰기엔 비싸다)
+   *
+   * 실제 조각 빈도(REAL=1)·성향 0.75로 고른 값 (2026-10-03). 16판 평균 생존 세트 · 점수 · 2줄 이상 비율:
+   *   기본                       79.6 · 46,518 ·  9%
+   *   potential 1.5 + near2 15   96.1 · 65,805 · 19%
+   *   potential 2.5 + near2 20  103.1 · 75,880 · 23%  ← 채택
+   *   potential 2.5 + near2 30   77.6 · 57,102 · 28%
+   * 앱 조건(빔 160, 미리 보기 200ms, 4판): 기본 117.8 · 78,344 · 15% → 채택값 106.0 · 85,291 · 32% (세트당 665 → 805점)
+   * near3·single은 2줄 이상을 더 늘리지만(31%까지) 판이 빨리 차서 생존이 20~30% 줄어 0으로 둔다.
+   * potential은 1.2~2.5에서 모두 기본보다 나았고 그 자체로 생존도 늘렸다 (거의 찬 줄을 모아 두면 구멍도 덜 생긴다)
    */
-  near2: 0,
+  near2: 20,
   near3: 0,
   single: 0,
-  potential: 0,
+  potential: 2.5,
 }
 
 /** 우물로 비워 둘 열 */
@@ -203,7 +212,7 @@ function quickEval(b: Board, style: number): number {
   }
   for (let r = 1; r < ROWS; r++) v -= popcount((b[r] ^ b[r - 1]) & FULL_ROW) * W.vTrans
   v -= filled * W.filled
-  if (W.near2 || W.near3) v += nearStacks(b)
+  if (W.near2 || W.near3) v += nearStacks(b) * scoreMul(style)
   const [p1, p2, deadEnd] = pockets(b)
   v -= p1 * W.p1 + p2 * W.p2 + deadEnd * W.deadEnd
   if (W.emptyRow) v += emptyRows * W.emptyRow
@@ -298,7 +307,7 @@ function finalEval(st: State, inp: SolveInput, remaining: number): { value: numb
   const o = outlook(st.board, inp.weights)
   const danger = 9000 + (1 - inp.style) * 26000
   let value = st.gained + quickEval(st.board, inp.style) + o.flex * 600 - o.risk * danger - o.stuck * 120
-  if (W.potential) value += W.potential * multiPotential(st.board, inp.weights)
+  if (W.potential) value += W.potential * scoreMul(inp.style) * multiPotential(st.board, inp.weights)
   // 다 못 놓은 조각이 있으면 그 판은 끝난다
   value -= remaining * 100000
   return { value, o }
@@ -342,7 +351,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
             }
             const gained = s.cells + lineScore(lines) + got * ABILITY_SCORE
             let quick = st.gained + gained + (doneAbilities + got) * 900 + quickEval(scratch, inp.style)
-            if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask)
+            if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask) * scoreMul(inp.style)
             const key = boardKey(scratch) + (st.used | (1 << slot))
             const prev = best.get(key)
             if (!prev || prev.quick < quick) best.set(key, { pi, slot, oi, r, c, quick })
@@ -411,7 +420,7 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   return {
     board, icons, used: st.used | (1 << slot), gained: total, held: st.held + got,
     steps: [...st.steps, step],
-    quick: total + acc + abilityBonus + quickEval(board, style) - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) : 0),
+    quick: total + acc + abilityBonus + quickEval(board, style) - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
   }
 }
 
@@ -502,10 +511,16 @@ function rollout(board: Board, set: Shape[][], style: number, weights: Map<numbe
     if (!next.length) return null
     beam = next
   }
-  return beam[0].q + (W.potential ? W.potential * multiPotential(beam[0].b, weights) : 0)
+  return beam[0].q + (W.potential ? W.potential * scoreMul(style) * multiPotential(beam[0].b, weights) : 0)
 }
 
 // ─── 큰 단위 제거 ────────────────────────────────────────────────────────
+
+/**
+ * 성향(0 안전 ~ 1 점수)에 따라 큰 단위 제거 항목을 얼마나 세게 볼지. 가중치는 성향 0.75(사용자 설정)에서 골랐고
+ * 그때 1.0이다. 안전 위주로 내리면 쌓기를 덜 해서 판이 덜 찬다
+ */
+const scoreMul = (style: number) => 0.4 + 0.8 * style
 
 /** 비트 마스크의 가로 폭 (가장 왼쪽 빈칸부터 가장 오른쪽 빈칸까지) */
 function span(mask: number): number {

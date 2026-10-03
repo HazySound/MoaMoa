@@ -423,7 +423,7 @@
             <span class="mt-1.5 block text-[11px] text-ink-500">길게 줄수록 다음 세트를 더 많이 가상으로 놓아 보고 골라요. 새 세트부터 적용돼요.</span>
           </label>
           <p class="text-[11px] leading-relaxed text-ink-500 sm:col-span-2">
-            능력과 제거한 줄 수는 판 변화로 자동으로 세요. 중간부터 켰다면 게임 화면에 맞춰 고쳐 주세요.
+            능력 개수와 제거한 줄 수는 게임 화면의 숫자를 읽어 맞춰요. 바로잡으면 노란 알림으로 알려 드리니 틀렸으면 여기서 고쳐 주세요.
             지금 {engine.stage}단계 기준으로 다음 조각 확률을 어림해요. 이 단계에서 실제로 본 조각 {engine.seenThisStage}개를 반영했어요(많을수록 정확해져요).
           </p>
         </div>

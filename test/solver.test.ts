@@ -135,3 +135,32 @@ describe('조각 빈도', () => {
     expect([...blendedWeights(c, 1).values()].reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6)
   })
 })
+
+describe('큰 단위 제거 잠재력 (multiPotential)', () => {
+  test('빈 판은 0, 두 줄이 같은 한 칸만 비었으면 2줄 제거 점수(1,200) × 그 자리를 메우는 조각 확률', async () => {
+    const { multiPotential } = await import('../src/lib/core/solver')
+    const w = defaultWeights(1)
+    expect(multiPotential(emptyBoard(), w)).toBe(0)
+    // 맨 아래 두 줄의 0열만 비었다: 세로로 세운 ㅡ(1×3)나 ㅣ(1×5)가 두 줄을 한 번에 메운다
+    const b = parseBoard(`
+      .#########
+      .#########`)
+    const v = multiPotential(b, w)
+    expect(v).toBeGreaterThan(0)
+    expect(v).toBeLessThanOrEqual(1200)
+  })
+  test('한 열만 비운 다섯 줄은 ㅣ로 5줄(7,500)을 지울 수 있어 잠재력이 훨씬 크다', async () => {
+    const { multiPotential } = await import('../src/lib/core/solver')
+    const w = defaultWeights(1)
+    const five = parseBoard(`
+      .#########
+      .#########
+      .#########
+      .#########
+      .#########`)
+    const two = parseBoard(`
+      .#########
+      .#########`)
+    expect(multiPotential(five, w)).toBeGreaterThan(multiPotential(two, w) * 3)
+  })
+})
