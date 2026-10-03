@@ -136,6 +136,37 @@ describe('조각 빈도', () => {
   })
 })
 
+describe('꽉 찼을 때 능력 쓰기', () => {
+  // 가상 플레이(2026-10-03): 꽉 찼다고 손해를 감수하며 쓰면(capCost 370·800) 생존이 124 → 82~86세트로 줄었고,
+  // 점 찍기 후보를 넓히는 것(capWide)도 90 → 76세트로 나빠졌다. 그래서 꽉 차도 '이득일 때만' 쓴다 (capCost 0, capWide 꺼짐)
+  const board = parseBoard(`
+      ....######
+      ...#######`)
+  test('7개여도 안내가 있으면 이득이 양수인 자리뿐이다', async () => {
+    const { abilityAdvice, solve, ADV } = await import('../src/lib/core/solver')
+    expect(ADV.capCost).toBe(0)
+    expect(ADV.capWide).toBe(false)
+    const hand = [piece('ㅡ'), piece('ㄱ3'), piece('점')]
+    const inp = { board, icons: [], hand, heldAbilities: 7, swaps: 3, dots: 4, weights: defaultWeights(1), style: 0.75, beam: 60 }
+    const plan = solve(inp, 1)[0]
+    const adv = abilityAdvice(inp, plan)
+    if (adv) expect(adv.gain!).toBeGreaterThan(0)
+  }, 30_000)
+  test('기회비용 손잡이(capCost)를 켜면 그만큼 손해까지는 쓴다', async () => {
+    const { abilityAdvice, solve, ADV } = await import('../src/lib/core/solver')
+    const hand = [piece('ㅡ'), piece('ㄱ3'), piece('점')]
+    const inp = { board, icons: [], hand, heldAbilities: 7, swaps: 3, dots: 4, weights: defaultWeights(1), style: 0.75, beam: 60 }
+    const plan = solve(inp, 1)[0]
+    const saved = { ...ADV }
+    Object.assign(ADV, { capCost: 370, capWide: true })
+    try {
+      const adv = abilityAdvice(inp, plan)
+      expect(adv).not.toBeNull()
+      expect(adv!.gain!).toBeGreaterThan(-370)
+    } finally { Object.assign(ADV, saved) }
+  }, 30_000)
+})
+
 describe('큰 단위 제거 잠재력 (multiPotential)', () => {
   test('빈 판은 0, 두 줄이 같은 한 칸만 비었으면 2줄 제거 점수(1,200) × 그 자리를 메우는 조각 확률', async () => {
     const { multiPotential } = await import('../src/lib/core/solver')
@@ -163,4 +194,44 @@ describe('큰 단위 제거 잠재력 (multiPotential)', () => {
       .#########`)
     expect(multiPotential(five, w)).toBeGreaterThan(multiPotential(two, w) * 3)
   })
+})
+
+describe('쌓아 둔 줄을 깨지 않는다 (실제 화면 로직.png)', () => {
+  // 1~3행이 모두 0열 한 칸만 비어 있다. ㅡ를 세로로 세우거나 ㅣ가 오면 3줄(2,700)이다.
+  // 점 찍기로 가운데 줄을 털면 300점 받고 그 기회를 깬다 (전에는 그렇게 안내했다)
+  const board = parseBoard(`
+      ..........
+      .#########
+      .#########
+      .#########
+      ...#####.#
+      ..........
+      ..........
+      ..........
+      #.###..#..
+      ###.......
+      ..........
+      ..........
+      ...##.###.
+      #####.....
+      ...###....
+      ..........`)
+  const icons = [{ r: 0, c: 8, kind: 'dot' as const }, { r: 5, c: 1, kind: 'swap' as const }]
+  test('점 찍기 안내가 쌓아 둔 줄(1~3행 0열)을 깨라고 하지 않는다', async () => {
+    const { abilityAdvice, solve } = await import('../src/lib/core/solver')
+    const { blendedWeights } = await import('../src/lib/core/stats')
+    const { readFileSync } = await import('node:fs')
+    const counts = JSON.parse(readFileSync('docs/data/piece-stats-2026-10-03.json', 'utf8')).counts
+    const hand = [piece('ㄷ'), piece('ㄹ'), null]
+    const inp = { board, icons, hand, heldAbilities: 6, swaps: 0, dots: 6, weights: blendedWeights(counts, 4), style: 0.75, beam: 60 }
+    const plan = solve(inp, 1)[0]
+    const adv = abilityAdvice(inp, plan)
+    if (adv?.kind === 'dot') expect([adv.r, adv.c]).not.toEqual(expect.arrayContaining([1, 0]))
+    if (adv?.kind === 'dot') expect(!(adv.c === 0 && adv.r >= 1 && adv.r <= 3), `점 찍기 ↓${adv.r + 1} →${adv.c + 1}`).toBe(true)
+    // 추천 배치도 0열 1~3행을 메우지 않는다
+    for (const st of plan.steps) for (let i = 0; i < st.shape.h; i++) {
+      const r = st.r + i
+      if (r >= 1 && r <= 3) expect((st.shape.rows[i] << st.c) & 1, `${r + 1}행 0열을 조각으로 메움`).toBe(0)
+    }
+  }, 30_000)
 })

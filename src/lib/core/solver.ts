@@ -182,11 +182,14 @@ export const W = {
    * 앱 조건(빔 160, 미리 보기 200ms, 4판): 기본 117.8 · 78,344 · 15% → 채택값 106.0 · 85,291 · 32% (세트당 665 → 805점)
    * near3·single은 2줄 이상을 더 늘리지만(31%까지) 판이 빨리 차서 생존이 20~30% 줄어 0으로 둔다.
    * potential은 1.2~2.5에서 모두 기본보다 나았고 그 자체로 생존도 늘렸다 (거의 찬 줄을 모아 두면 구멍도 덜 생긴다)
+   *
+   * 그 뒤 multiPotential을 '다음 조각 하나'가 아니라 '판 여유만큼 기다리는 동안 하나라도 올 확률'로 바꿨다 (값이 커진다).
+   * 같은 조건 8판: potential 0.8 → 93.3 · 68,165 · 23% / 1.0 → 88.8 · 64,547 / 1.5 → 100.0 · 73,718 · 24% (채택) / 2.5 → 73.3 · 52,802
    */
   near2: 20,
   near3: 0,
   single: 0,
-  potential: 2.5,
+  potential: 1.5,
 }
 
 /** 우물로 비워 둘 열 */
@@ -554,13 +557,31 @@ function singlePenalty(before: Board, clearedMask: number): number {
 }
 
 /**
- * 다음 조각 하나로 2줄 이상 한 번에 지울 수 있는 자리의 기대 점수 (조각 확률 × 가장 좋은 자리의 제거 점수).
+ * 큰 제거를 준비해 두고 기다릴 수 있는 조각 수. 블록이 안 떨어지는 게임이라 쌓아 둔 줄은 그대로 남지만,
+ * 기다리는 동안 다른 조각을 어딘가에 놓아야 하므로 판 여유(빈칸)가 기다릴 수 있는 길이를 정한다.
+ * 한 세트에 약 15~19칸을 놓는다. 보수적으로 잡지 않는다: 빈칸이 60개 넘으면 세 세트 이상(12장)까지 기다리고,
+ * 정말 한두 세트 안에 막힐 것 같을 때(빈칸 30개 아래)만 한 세트 안팎으로 줄여 지금 터는 쪽이 이기게 한다.
+ * 일찍 털면 손해 볼 확률이 높다는 사용자 방침 (2026-10-03). 죽을 위험 자체는 마지막 평가의 risk 항목이 따로 깎는다
+ */
+function potentialDraws(b: Board): number {
+  let free = 0
+  for (let r = 0; r < ROWS; r++) free += COLS - popcount(b[r])
+  return Math.max(3, Math.min(12, Math.round(free / 6)))
+}
+
+/**
+ * 2줄 이상 한 번에 지울 수 있는 자리의 기대 점수.
+ * 조각마다 그 조각 하나로 지울 수 있는 가장 큰 줄 수를 찾고, 앞으로 potentialDraws(판 여유)개 안에 그런 조각이
+ * 하나라도 올 확률로 친다: EV = Σ_k lineScore(k) × [P(k줄 이상 되는 조각이 옴) − P(k+1줄 이상)].
+ * 전에는 '다음 조각 하나'의 확률만 써서(ㅣ·ㅡ 합쳐 13%) 3줄 준비(2,700)가 350점으로만 보였고, 점 찍기 300점이
+ * 그걸 이겨서 쌓아 둔 줄을 깨라고 했다 (2026-10-03 사용자 지적). 두 세트 안에 올 확률(약 56%)로 보면 1,500점이다.
  * 2줄 1,200 · 3줄 2,700 · 4줄 4,800 · 5줄 7,500이라 큰 제거를 준비한 판이 크게 오른다
  */
 export function multiPotential(b: Board, weights: Map<number, number>): number {
   const n = new Array<number>(ROWS)
   for (let r = 0; r < ROWS; r++) n[r] = popcount(~b[r] & FULL_ROW)
-  let ev = 0
+  // 줄 수(2~5)별로, 그만큼 지울 수 있는 조각들의 확률 합
+  const byLines = [0, 0, 0, 0, 0, 0]
   for (const p of PIECES) {
     const w = weights.get(p.id) ?? 0
     if (!w) continue
@@ -579,11 +600,21 @@ export function multiPotential(b: Board, weights: Map<number, number>): number {
             if (b[r + i] & bits) { ok = false; break }
             if ((b[r + i] | bits) === FULL_ROW) k++
           }
-          if (ok && k >= 2) { const v = lineScore(k); if (v > best) best = v }
+          if (ok && k >= 2 && k > best) best = k
         }
       }
     }
-    ev += w * best
+    if (best >= 2) byLines[Math.min(best, 5)] += w
+  }
+  const draws = potentialDraws(b)
+  let ev = 0, above = 0 // above: k+1줄 이상 되는 조각이 하나라도 올 확률
+  for (let k = 5; k >= 2; k--) {
+    const q = byLines[k]
+    if (!q) continue
+    const atLeast = 1 - (1 - Math.min(1, above + q)) ** draws
+    const pAbove = 1 - (1 - Math.min(1, above)) ** draws
+    ev += lineScore(k) * (atLeast - pAbove)
+    above += q
   }
   return ev
 }
@@ -685,7 +716,18 @@ export function rescue(inp: SolveInput, base: Plan | undefined): Rescue | null {
  *  - 점 찍기는 막혔을 때, 또는 이득이 아주 클 때(대개 어떤 조각으로도 못 메우는 구멍이 있는 줄을 지울 때)
  *  - 6개 이상이면(7개면 아이콘이 안 생기고 카운트도 멈춘다) 이득이 되는 순간 점 찍기부터 털어 회전시킨다
  */
-export const ADV = { dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 6, keep: 0, capMode: 'any' as 'collect' | 'any', swapFirst: false }
+export const ADV = {
+  dotGain: 1200, swapRisk: 2, swapGain: 300, cap: 6, keep: 0, capMode: 'any' as 'collect' | 'any', swapFirst: false,
+  /**
+   * 7개(꽉 참)일 때의 기회비용 (2026-10-03). 꽉 차 있으면 새 아이콘이 안 생기고 카운트도 멈춰 그 뒤 아이콘이 버려진다.
+   * 실제 16만 점 판에서 215세트 동안 능력 88개를 얻었으니 세트당 0.41개, 능력 하나를 900으로 치면 세트당 약 370점이다.
+   * 그래서 꽉 찼을 때는 '이득 > 0'이 아니라 '이득 > -capCost'면 쓴다. 쓰는 게 그보다 더 손해면 그냥 놓는다 (사용자 방침:
+   * 무조건 쓰지는 않되 기회비용은 따진다). 점 찍기 후보도 한 칸 빈 줄만이 아니라 거의 찬 줄의 빈칸·못 메우는 구멍까지 본다
+   */
+  capCost: 0,
+  /** 꽉 찼을 때 점 찍기 후보를 거의 찬 줄의 빈칸·못 메우는 구멍까지 넓힌다 */
+  capWide: false,
+}
 
 /** 계획대로 두면 꽉 차서 못 챙기는 아이콘들 */
 function missedIcons(inp: SolveInput, plan: Plan): Icon['kind'][] {
@@ -703,7 +745,8 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
   const stuck = rescue(inp, base)
   if (stuck || !base) return stuck
   const swaps = inp.swaps ?? 0, dots = inp.dots ?? 0
-  const quick = (i: SolveInput) => searchPlans({ ...i, beam: 60, budgetMs: 0 }, 1)[0]
+  // 후보마다 한 번씩 돌리므로 작은 빔으로 (꽉 찼을 때 점 찍기 후보 12칸 + 바꿔 뽑기 표본으로 1.4초가 걸렸다 → 약 0.5초)
+  const quick = (i: SolveInput) => searchPlans({ ...i, beam: 30, budgetMs: 0 }, 1)[0]
   const now = quick(inp)
   if (!now || now.incomplete) return null
 
@@ -713,13 +756,23 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
   const makeRoom = missed.length > 0 && swaps > 0
   const roomGain = missed.includes('dot') ? -Infinity : 0
 
+  // 꽉 찼으면 점 찍기 후보를 넓히고(capWide), 기준을 기회비용만큼 내린다(capCost). 둘은 따로 켜고 끈다
+  const atCap = inp.heldAbilities >= ABILITY_CAP
+  const wide = atCap && ADV.capWide
   if (dots > 0) {
     const stuckMask = stuckRows(inp.board)
-    let best: Rescue | null = null, bestGain = nearCap && !(ADV.swapFirst && swaps > 0) ? 0 : ADV.dotGain
+    let best: Rescue | null = null, bestGain = atCap ? -ADV.capCost : nearCap && !(ADV.swapFirst && swaps > 0) ? 0 : ADV.dotGain
+    // 후보 칸: 한 칸만 빈 줄의 그 칸. 꽉 찼으면 거의 찬 줄(빈칸 ≤ 4)의 빈칸과 어떤 조각으로도 못 메우는 칸까지 넓힌다
+    const cells: [number, number][] = []
     for (let r = 0; r < ROWS; r++) {
-      const row = inp.board[r]
-      if (popcount(row) !== COLS - 1) continue
-      const c = Math.log2(~row & FULL_ROW) | 0
+      const row = inp.board[r], n = popcount(row)
+      if (n === COLS - 1) cells.push([r, Math.log2(~row & FULL_ROW) | 0])
+      else if (wide && n >= COLS - 4) for (let c = 0; c < COLS; c++) if (!((row >> c) & 1)) cells.push([r, c])
+      else if (wide && stuckMask[r]) for (let c = 0; c < COLS; c++) if ((stuckMask[r] >> c) & 1) cells.push([r, c])
+    }
+    // 후보마다 탐색을 돌리므로 거의 찬 줄 순으로 12칸까지만 본다 (워커에서 1초 안에 끝나야 한다)
+    cells.sort((a, b) => popcount(inp.board[b[0]]) - popcount(inp.board[a[0]]))
+    for (const [r, c] of cells.slice(0, 12)) {
       const res = place(inp.board, DOT_SHAPE, r, c, inp.icons, inp.heldAbilities)
       const plan = quick({ ...inp, board: res.board, icons: res.icons, heldAbilities: inp.heldAbilities - 1 + res.abilities.length })
       if (!plan || plan.incomplete) continue
@@ -731,12 +784,13 @@ export function abilityAdvice(inp: SolveInput, base: Plan | undefined): Rescue |
     if (best) return best
   }
 
-  if (swaps > 0 && (base.risk >= ADV.swapRisk || nearCap || makeRoom)) {
+  if (swaps > 0 && (base.risk >= ADV.swapRisk || nearCap || makeRoom || atCap)) {
     const table = weightTable(inp.weights)
     const rand = rng(hashBoard(inp.board) ^ 0x51ed27)
-    const SAMPLES = 5
+    const SAMPLES = 5 // 3으로 줄이면 바꿔 뽑기 판단이 흔들려 생존이 124 → 90세트로 떨어졌다 (2026-10-03). 느려도 5개
     let best: Rescue | null = null
-    let bestGain = makeRoom ? roomGain : nearCap ? 0 : ADV.swapGain
+    // 꽉 찼는데 점 찍기를 쓸 만한 자리가 없으면 바꿔 뽑기도 기회비용만큼은 손해를 감수한다
+    let bestGain = atCap ? -ADV.capCost : makeRoom ? roomGain : nearCap ? 0 : ADV.swapGain
     // 바꿀 카드는 바꾼 뒤 평균이 가장 좋은(손실이 가장 적은) 카드
     inp.hand.forEach((h, slot) => {
       if (!h) return
