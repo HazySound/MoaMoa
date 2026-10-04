@@ -16,6 +16,8 @@ import { abilityAdvice, rescue, solve, rng } from '../src/lib/core/solver'
 
 /** 실험용: ADVICE=1이면 앱처럼 막히기 전에도 능력을 쓴다 */
 const ADVICE = process.env.ADVICE === '1'
+/** 실험용: REPLAN=1이면 조각 하나를 놓을 때마다 다시 계산한다. 앱은 인식 보정 때문에 세트 중간에 자주 다시 계산한다 (2026-10-04: 35세트에 28번) */
+const REPLAN = process.env.REPLAN === '1'
 
 const DOT: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 export const CAP = 500_000
@@ -84,7 +86,7 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
         }
         if (plan && plan.steps.length) {
           // 다 못 놓는 계획이면 첫 단계만 두고 다시 본다
-          const steps = plan.incomplete ? plan.steps.slice(0, 1) : plan.steps
+          const steps = plan.incomplete || REPLAN ? plan.steps.slice(0, 1) : plan.steps
           for (const st of steps) {
             const r = place(board, st.shape, st.r, st.c, icons, swaps + dots)
             board = r.board; icons = r.icons; score += r.gained; lines += r.cleared.length; give(r.abilities)
@@ -95,7 +97,7 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
             // 7개를 들고 있으면 아이콘이 생기지 않고 카운트도 멈춘다
             if (swaps + dots < 7 && ++placed % 7 === 0) spawn()
           }
-          if (!plan.incomplete) break
+          if (!plan.incomplete && !REPLAN) break
           continue
         }
         if (o.debug) {
