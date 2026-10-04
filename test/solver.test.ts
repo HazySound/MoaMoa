@@ -343,3 +343,52 @@ describe('위기용 점 찍기도 이득이 확실하면 쓴다 (실제 화면 �
     expect(plan.gained).toBeGreaterThan(10000)
   }, 60_000)
 })
+
+describe('조각 조합 규칙 (docs/PIECE-COMBOS.md): 닻·홈 방향·직사각형 완성', () => {
+  const shape = (name: string) => PIECES.find((p) => p.name === name)!.shape
+  test('속 빈 조각(ㅁ·ㅂ·ㅎ·ㅇ)만 속 빈칸이 있고, 지그재그는 홈만 있다', async () => {
+    const { gapsForTest: gaps } = await import('../src/lib/core/solver')
+    expect(gaps(shape('ㅁ')).holes).toEqual([[1, 1]])
+    expect(gaps(shape('ㅂ')).holes.length).toBe(1)
+    expect(gaps(shape('ㅎ')).holes.length).toBe(1)
+    expect(gaps(shape('ㅇ')).holes.length).toBe(1)
+    expect(gaps(shape('ㄹ')).holes.length).toBe(0)
+    expect(gaps(shape('ㄹ')).notches.length).toBe(2)
+    expect(gaps(shape('ㅌ')).notches.length).toBe(2)
+  })
+  test('ㅁ을 홀로 튀어나온 블록 위에 씌우면 닻 보너스, 빈 데 놓으면 없다', async () => {
+    const { placeBonusForTest: bonus, W } = await import('../src/lib/core/solver')
+    const empty = emptyBoard()
+    const anchored = emptyBoard(); anchored[6] |= 1 << 4 // (6,4)에 블록 하나
+    const s = shape('ㅁ')
+    const after = (b: Board) => { const a = b.slice(); for (let i = 0; i < s.h; i++) a[5 + i] |= s.rows[i] << 3; return a }
+    expect(bonus(anchored, after(anchored), s, 5, 3)).toBe(W.anchor)
+    expect(bonus(empty, after(empty), s, 5, 3)).toBe(0)
+  })
+  test('ㄹ의 홈이 찬 블록을 향해 막다른 칸이 되면 벌점, 빈 쪽을 향하면 없다', async () => {
+    const { placeBonusForTest: bonus, W } = await import('../src/lib/core/solver')
+    const s = shape('ㄹ') // 5×2: ##/.#/##/#./##
+    // 왼쪽 벽에 붙이면 (1,0) 홈이 왼쪽 벽·위·아래 블록에 막혀 막다른 칸이 된다
+    const b = emptyBoard()
+    const a1 = b.slice(); for (let i = 0; i < s.h; i++) a1[0 + i] |= s.rows[i] << 0
+    expect(bonus(b, a1, s, 0, 0)).toBe(-W.notch) // (1,0)은 사방이 막혔고 (3,1)은 오른쪽이 트여 있다
+    // 판 가운데에 놓으면 두 홈 모두 옆이 트여 있어 벌점이 없다
+    const a2 = b.slice(); for (let i = 0; i < s.h; i++) a2[0 + i] |= s.rows[i] << 4
+    expect(bonus(b, a2, s, 0, 4)).toBe(0)
+  })
+  test('눕힌 ㅌ 위에 ㅏ를 맞물리면 3×5 직사각형이 닫혀 보너스', async () => {
+    const { placeBonusForTest: bonus, W } = await import('../src/lib/core/solver')
+    const t = orientations(shape('ㅌ')).map((o) => o.shape).find((x) => x.h === 2 && x.w === 5 && x.rows[0] === 0b11111)!
+    const a = orientations(shape('ㅏ')).map((o) => o.shape).find((x) => x.h === 2 && x.w === 5 && x.rows[1] === 0b11111)!
+    const b = emptyBoard(); for (let i = 0; i < 2; i++) b[3 + i] |= t.rows[i] << 2 // ㅌ: 3행 #####, 4행 #.#.#
+    expect(canPlace(b, a, 4, 2)).toBe(true) // ㅏ: 4행 .#.#., 5행 #####
+    const after = b.slice(); for (let i = 0; i < 2; i++) after[4 + i] |= a.rows[i] << 2
+    // 조각 높이가 2라 직사각형 보너스 조건(조각 3줄 이상)에는 안 걸리지만 홈 벌점도 없어야 한다
+    expect(bonus(b, after, a, 4, 2)).toBe(0)
+    // 세로 ㅡ(3×1)로 3줄 기둥을 닫는 경우: 3~5행이 2~6열 가득 → 너비 5 ≥ 4
+    const col = orientations(shape('ㅡ')).map((o) => o.shape).find((x) => x.h === 3)!
+    const b2 = after.slice(); b2[3] &= ~(1 << 2); b2[4] &= ~(1 << 2); b2[5] &= ~(1 << 2)
+    const after2 = b2.slice(); for (let i = 0; i < 3; i++) after2[3 + i] |= col.rows[i] << 2
+    expect(bonus(b2, after2, col, 3, 2)).toBe(W.rect)
+  })
+})

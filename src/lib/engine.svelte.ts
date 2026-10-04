@@ -1060,7 +1060,7 @@ class Engine {
       input: {
         board: $state.snapshot(this.board), icons: $state.snapshot(this.icons), hand: $state.snapshot(hand) as (Shape | null)[],
         heldAbilities: this.heldForSolve, swaps: this.swaps, dots: this.dots,
-        weights: blendedWeights(this.pieceCounts, this.stage), style: this.style, budgetMs: this.thinkMs,
+        weights: blendedWeights(this.pieceCounts, this.stage), stage: this.stage, style: this.style, budgetMs: this.thinkMs,
       },
     }
     this.worker.postMessage(req)

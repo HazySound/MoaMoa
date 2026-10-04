@@ -28,6 +28,8 @@ export interface SolveInput {
   dots?: number
   /** 조각 id → 등장 확률 */
   weights: Map<number, number>
+  /** 단계(1~5). 후반(4·5)은 2줄 띠가 안 만들어져 3줄 묶음을 더 쳐 준다 (docs/PIECE-COMBOS.md). 없으면 1 */
+  stage?: number
   /** 0 = 안전 위주, 1 = 점수 위주 */
   style: number
   /** 빔 너비. 기본 160 (시뮬레이션에서 줄여 쓴다) */
@@ -94,6 +96,8 @@ interface State {
   dt: number
   /** 이 계획에서 얻은 능력들의 가치 합 (iconWorth) */
   abilValue: number
+  /** 자리 보너스 누적 (placeBonus: 닻·홈 방향·직사각형) */
+  bonus: number
 }
 
 /** slot -1이면 점 찍기 */
@@ -139,7 +143,7 @@ const ROLLOUT_BEAM = 8
  */
 function pockets(b: Board): [p1: number, p2: number, deadEnd: number] {
   let p1 = 0, p2 = 0, dead = 0
-  let prevOne = 0
+  let prevOne = 0, prevIso = 0
   for (let r = 0; r < ROWS; r++) {
     const e = ~b[r] & FULL_ROW
     const up = r > 0 ? ~b[r - 1] & FULL_ROW : 0
@@ -149,13 +153,77 @@ function pockets(b: Board): [p1: number, p2: number, deadEnd: number] {
     const any = L | R | up | down
     const two = (L & R) | (L & up) | (L & down) | (R & up) | (R & down) | (up & down)
     const one = e & any & ~two
-    p1 += popcount(e & ~any)
+    const iso = e & ~any
+    // 같은 열에 세로로 이어진 1칸 구멍은 ㅣ 하나·점 찍기 몇 개로 같이 풀리므로 반값 (docs/PIECE-COMBOS.md 4절 4번)
+    if (W.holeCol) { const chained = iso & (prevIso | (r < ROWS - 1 ? ~b[r + 1] & FULL_ROW : 0)); p1 += popcount(iso & ~chained) + popcount(chained) * W.holeCol }
+    else p1 += popcount(iso)
+    prevIso = iso
     p2 += 2 * popcount(one & R & (one >> 1))
     p2 += 2 * popcount(one & prevOne & up)
     dead += popcount(one)
     prevOne = one
   }
   return [p1, p2, dead - p2]
+}
+
+/**
+ * 조각 모양의 빈칸 분류 (docs/PIECE-COMBOS.md 4절).
+ *  - 속 빈칸(holes): 조각 안에서 사방이 조각 칸으로 막힌 빈칸 (ㅁ의 가운데, ㅂ의 안쪽 홈, ㅎ의 가운데, ㅇ의 가운데).
+ *    놓는 순간 고립 구멍이 되므로, 이미 블록이 있는 칸(닻) 위에 겹치게 놓아야 한다
+ *  - 홈(notches): 테두리 상자 안의 나머지 빈칸 (ㄹ·ㅊ·ㅈ·ㅋ·ㅌ의 홈). 놓은 뒤 트인 쪽을 봐야 다음 조각이 메운다
+ */
+interface Gaps { holes: [number, number][]; notches: [number, number][] }
+const GAPS = new Map<string, Gaps>()
+function gapsOf(s: Shape): Gaps {
+  let g = GAPS.get(s.key)
+  if (g) return g
+  const holes: [number, number][] = [], notches: [number, number][] = []
+  const on = (i: number, j: number) => i >= 0 && i < s.h && j >= 0 && j < s.w && ((s.rows[i] >> j) & 1) === 1
+  for (let i = 0; i < s.h; i++) for (let j = 0; j < s.w; j++) {
+    if (on(i, j)) continue
+    if (on(i - 1, j) && on(i + 1, j) && on(i, j - 1) && on(i, j + 1)) holes.push([i, j])
+    else notches.push([i, j])
+  }
+  g = { holes, notches }
+  GAPS.set(s.key, g)
+  return g
+}
+
+/**
+ * 조각을 (r, c)에 놓았을 때의 자리 보너스 (docs/PIECE-COMBOS.md 5절). before는 놓기 전 판, after는 놓은 뒤(줄 지우기 전) 판.
+ *  1) 닻: 속 빈칸이 기존 블록 위에 겹치면 구멍이 안 생긴다 → +W.anchor. (안 겹치면 그 칸은 고립 구멍이 돼 p1 벌점을 받는다)
+ *  2) 홈 방향: 홈이 놓은 뒤 빈 이웃이 하나뿐(막다른 칸)이거나 없으면 −W.notch. 트인 쪽을 향하면 0
+ *  3) 직사각형 완성: 조각이 걸친 줄들이 조각 열을 포함해 너비 4 이상 가득 찬 기둥을 이루고 높이가 3 이상이면 +W.rect
+ */
+function placeBonus(before: Board, after: Board, s: Shape, r: number, c: number): number {
+  let v = 0
+  const g = gapsOf(s)
+  if (W.anchor) for (const [i, j] of g.holes) if ((before[r + i] >> (c + j)) & 1) v += W.anchor
+  if (W.notch) for (const [i, j] of g.notches) {
+    const rr = r + i, cc = c + j
+    if ((after[rr] >> cc) & 1) continue // 기존 블록이 있던 홈은 이미 메워진 것
+    // 홈은 조각 자체가 세 면을 막고 있어 트인 면이 하나뿐인 게 보통이다. 그 트인 이웃이 다시 빈칸 둘 이상과 닿아 있어야
+    // '열린 쪽'이고, 그 이웃마저 막혀 있으면 막다른 골목이라 다음 조각이 못 들어온다
+    const emptyAt = (y: number, x: number) => y >= 0 && y < ROWS && x >= 0 && x < COLS && !((after[y] >> x) & 1)
+    const nbrs = (y: number, x: number, ey: number, ex: number) => { let n = 0; for (const [dy, dx] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) { const yy = y + dy, xx = x + dx; if ((yy !== ey || xx !== ex) && emptyAt(yy, xx)) n++ } return n }
+    let open = 0, roomy = false
+    for (const [dy, dx] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const yy = rr + dy, xx = cc + dx
+      if (!emptyAt(yy, xx)) continue
+      open++
+      if (nbrs(yy, xx, rr, cc) >= 2) roomy = true
+    }
+    if (open === 0 || (open === 1 && !roomy)) v -= W.notch
+  }
+  if (W.rect && s.h >= 3) {
+    let band = FULL_ROW
+    for (let i = 0; i < s.h; i++) band &= after[r + i]
+    // 조각 열을 포함하는, 가득 찬 열의 연속 구간 길이
+    let len = 0
+    for (let cc = c; cc < c + s.w; cc++) if ((band >> cc) & 1) { len = 1; let a = cc - 1, b = cc + 1; while (a >= 0 && (band >> a) & 1) { len++; a-- } while (b < COLS && (band >> b) & 1) { len++; b++ } break }
+    if (len >= 4) v += W.rect
+  }
+  return v
 }
 
 /**
@@ -226,6 +294,14 @@ export const W = {
   reserve: 0,
   /** 묵은 줄(staleRows) 하나당 벌점. 켜면 134.4 → 137.0세트로 조금 낫다 */
   stale: 120,
+  /** 닻 보너스: 속 빈 조각(ㅁ·ㅂ·ㅎ·ㅇ)의 빈칸이 기존 블록 위에 겹쳐 구멍이 안 생길 때 (docs/PIECE-COMBOS.md) */
+  anchor: 900,
+  /** 홈 방향 벌점: 놓은 조각의 홈이 막다른 칸이 될 때 */
+  notch: 300,
+  /** 직사각형 완성 보너스: 조각이 걸친 3줄 이상이 너비 4 이상 가득 찬 기둥을 이룰 때 */
+  rect: 300,
+  /** 같은 열에 세로로 이어진 1칸 구멍의 벌점 비율 (0이면 끔) */
+  holeCol: 0.5,
   /** 통째로 빈 줄 (큰 조각 자리) */
   emptyRow: 0,
   /** 3×3 빈 공간 수 (ㅁ·ㅇ·ㅈ·ㅊ 자리) */
@@ -397,8 +473,8 @@ export function outlook(b: Board, weights: Map<number, number>): Outlook {
 function finalEval(st: State, inp: SolveInput, remaining: number): { value: number; o: Outlook } {
   const o = outlook(st.board, inp.weights)
   const danger = ADV.dangerBase + (1 - inp.style) * ADV.dangerStyle
-  let value = st.gained + quickEval(st.board, inp.style) + o.flex * 600 - o.risk * danger - o.stuck * 120
-  if (W.potential) value += W.potential * scoreMul(inp.style) * multiPotential(st.board, inp.weights, spareDotsAfter(inp, st.dotsUsed))
+  let value = st.gained + st.bonus + quickEval(st.board, inp.style) + o.flex * 600 - o.risk * danger - o.stuck * 120
+  if (W.potential) value += W.potential * scoreMul(inp.style) * multiPotential(st.board, inp.weights, spareDotsAfter(inp, st.dotsUsed), inp.stage ?? 1)
   // 다 못 놓은 조각이 있으면 그 판은 끝난다
   value -= remaining * 100000
   return { value, o }
@@ -411,9 +487,9 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
   const orients = new Map(slots.map(([i, s]) => [i, orientations(s)]))
   const start: State = {
     board: inp.board, icons: inp.icons, used: 0, gained: 0, held: inp.heldAbilities, steps: [], quick: 0, dotsUsed: 0, dotCost: 0, pot: 0,
-    sw: inp.swaps ?? Math.max(0, inp.heldAbilities - (inp.dots ?? 0)), dt: inp.dots ?? 0, abilValue: 0,
+    sw: inp.swaps ?? Math.max(0, inp.heldAbilities - (inp.dots ?? 0)), dt: inp.dots ?? 0, abilValue: 0, bonus: 0,
   }
-  if (W.potential) start.pot = W.potential * scoreMul(inp.style) * multiPotential(inp.board, inp.weights, spareDotsAfter(inp, 0))
+  if (W.potential) start.pot = W.potential * scoreMul(inp.style) * multiPotential(inp.board, inp.weights, spareDotsAfter(inp, 0), inp.stage ?? 1)
   const allUsed = slots.reduce((m, [i]) => m | (1 << i), 0)
   // 점 찍기를 넉넉히 들고 있으면(위기용 keepDots개는 남기고) 계획 안에 점 찍기 단계를 넣는다.
   // 전에는 능력을 '막혔을 때 살리기'로만 써서, 점 찍기 5개를 쥐고도 두 칸 메워 큰 제거 자리를 만드는 수를 못 봤다 (2026-10-03 사용자 지적)
@@ -441,6 +517,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
           scratch[r + i] |= s.rows[i] << c
           if (scratch[r + i] === FULL_ROW) { lines++; clearedMask |= 1 << (r + i) }
         }
+        const bonus = slot < 0 ? 0 : placeBonus(st.board, scratch, s, r, c)
         let got = 0, gotWorth = 0, sw = st.sw, dt = st.dt
         if (lines) {
           for (let k = 0; k < ROWS; k++) if (clearedMask & (1 << k)) scratch[k] = 0
@@ -449,7 +526,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
         const gained = s.cells + lineScore(lines) + got * ABILITY_SCORE
         // 부모의 잠재력 보너스를 자식의 어림값으로 얹는다. 잠재력은 추린 뒤에만 제대로 계산하는데, 그 전 순위가 빠른 평가만이면
         // 한 줄 지우는 +300이 더미를 지키는 자리들을 전부 밀어내 잠재력을 볼 기회조차 없었다 (2026-10-03: stack5 판에서 5줄 더미를 깨고 한 줄을 털었다)
-        let quick = st.gained + gained + st.abilValue + gotWorth + quickEval(scratch, inp.style) - cost + (ADV.parentPot ? st.pot : 0)
+        let quick = st.gained + gained + st.abilValue + gotWorth + bonus + quickEval(scratch, inp.style) - cost + (ADV.parentPot ? st.pot : 0)
         if (W.single && lines === 1) quick -= singlePenalty(st.board, clearedMask) * scoreMul(inp.style)
         const key = boardKey(scratch) + (slot < 0 ? st.used : st.used | (1 << slot))
         const prev = best.get(key)
@@ -501,7 +578,7 @@ function searchPlans(inp: SolveInput, topN: number): Plan[] {
       const o = cd.slot < 0 ? dotOrient : orients.get(cd.slot)![cd.oi]
       const child = expand(beam[cd.pi], cd.slot, o.flip, o.rot, o.shape, cd.r, cd.c, inp)
       if (W.potential) {
-        child.pot = W.potential * scoreMul(inp.style) * multiPotential(child.board, inp.weights, spareDotsAfter(inp, child.dotsUsed))
+        child.pot = W.potential * scoreMul(inp.style) * multiPotential(child.board, inp.weights, spareDotsAfter(inp, child.dotsUsed), inp.stage ?? 1)
         child.quick += child.pot
       }
       return child
@@ -545,6 +622,7 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
     board[r + i] |= s.rows[i] << c
     if (board[r + i] === FULL_ROW) cleared.push(r + i)
   }
+  const bonus = st.bonus + (slot < 0 ? 0 : placeBonus(st.board, board, s, r, c))
   let gained = s.cells + lineScore(cleared.length)
   let icons = st.icons
   let got = 0, gotWorth = 0, sw = st.sw, dt = st.dt
@@ -566,9 +644,9 @@ function expand(st: State, slot: number, flip: boolean, rot: number, s: Shape, r
   const dotCost = st.dotCost + (slot < 0 ? dotStepCost(inp, st.dotsUsed) : 0)
   return {
     board, icons, used: slot < 0 ? st.used : st.used | (1 << slot), gained: total, held: st.held + got, dotsUsed, dotCost, pot: 0,
-    sw, dt: slot < 0 ? dt - 1 : dt, abilValue,
+    sw, dt: slot < 0 ? dt - 1 : dt, abilValue, bonus,
     steps: [...st.steps, step],
-    quick: total + abilValue + quickEval(board, style) - dotCost - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
+    quick: total + abilValue + bonus + quickEval(board, style) - dotCost - (W.single && cleared.length === 1 ? singlePenalty(st.board, 1 << cleared[0]) * scoreMul(style) : 0),
   }
 }
 
@@ -739,7 +817,7 @@ function potentialDraws(b: Board): number {
  * 그걸 이겨서 쌓아 둔 줄을 깨라고 했다 (2026-10-03 사용자 지적). 두 세트 안에 올 확률(약 56%)로 보면 1,500점이다.
  * 2줄 1,200 · 3줄 2,700 · 4줄 4,800 · 5줄 7,500이라 큰 제거를 준비한 판이 크게 오른다
  */
-export function multiPotential(b: Board, weights: Map<number, number>, spareDots = 0): number {
+export function multiPotential(b: Board, weights: Map<number, number>, spareDots = 0, stage = 1): number {
   const n = new Array<number>(ROWS)
   for (let r = 0; r < ROWS; r++) n[r] = popcount(~b[r] & FULL_ROW)
   // 더미(한 번에 지워지는 줄 묶음)마다, 그걸 지울 수 있는 조각들의 확률 합. 조각 하나는 더미 하나에 한 번만 센다.
@@ -793,7 +871,9 @@ export function multiPotential(b: Board, weights: Map<number, number>, spareDots
   const draws = potentialDraws(b)
   const valued = [...groups].map(([mask, g]) => {
     // 4줄 이상은 3줄과 같은 값: 높이 쌓아 기다릴 이유를 없앤다 (docs/SCORE-CYCLE.md 2절)
-    const prize = lineScore(Math.min(popcount(mask), ADV.stackMax)) - ADV.planDotCost * g.dots
+    const n = Math.min(popcount(mask), ADV.stackMax)
+    // 후반(단계 4·5)은 2줄 띠가 후반 조각으로 안 만들어지므로 3줄 묶음을 더 쳐 준다 (docs/PIECE-COMBOS.md 2절)
+    const prize = lineScore(n) * (n >= 3 && stage >= 4 ? ADV.lateTriple : 1) - ADV.planDotCost * g.dots
     return { mask, g, prize, ev: prize * (1 - (1 - Math.min(1, g.q)) ** draws) }
   }).filter((x) => x.prize > 0).sort((x, y) => y.ev - x.ev)
   let ev = 0, covered = 0, dotsLeft = spareDots
@@ -939,6 +1019,8 @@ export const ADV = {
   dotWorth: 900, dotWorthMany: 500, swapWorth: 300, swapWorthMany: 100,
   /** 더미 가치는 이 줄 수에서 자른다 (4줄 이상은 3줄과 같은 값) */
   stackMax: 3,
+  /** 후반(단계 4·5)에 3줄 묶음 가치에 곱하는 배율 */
+  lateTriple: 1.2,
   /** 다음 세트 가상 플레이의 사망 표본 수를 1순위 정렬 기준으로 쓴다 */
   survivalFirst: true,
   /**
@@ -1085,3 +1167,6 @@ export const pocketsForTest = pockets
 /** 테스트·진단용 */
 export const quickEvalForTest = quickEval
 export const finalEvalForTest = finalEval
+
+export const gapsForTest = gapsOf
+export const placeBonusForTest = placeBonus

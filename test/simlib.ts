@@ -69,7 +69,7 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
     outer: for (; sets < maxSets && score < CAP; sets++) {
       let hand: (Shape | null)[] = [0, 1, 2].map(() => drawPiece(rand, lines))
       while (hand.some(Boolean)) {
-        const input = { board, icons, hand, heldAbilities: swaps + dots, swaps, dots, weights: weightsFor(lines), style, beam, budgetMs: budget }
+        const input = { board, icons, hand, heldAbilities: swaps + dots, swaps, dots, weights: weightsFor(lines), stage: stageOf(lines), style, beam, budgetMs: budget }
         const plan = solve(input)[0]
         // 앱과 똑같이 능력 추천을 따른다 (ADVICE면 막히기 전에도)
         if (plan?.incomplete || ADVICE) {
