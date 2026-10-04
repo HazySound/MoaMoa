@@ -137,6 +137,43 @@ describe('추천대로 놓기', () => {
     expect(engine.snapshot().journal.length).toBe(engine.journal.length)
     engine.capturing = false
   })
+
+  test('다시 맞춤 중에 새 세트가 떴으면(쓴 카드 자리에 조각 세 장) 세트로 세고 일지에도 남긴다', async () => {
+    const { PIECES } = await import('../src/lib/core/pieces')
+    engine.reset()
+    engine.capturing = true
+    feed('empty3.png')
+    await flush()
+    const sets0 = engine.games.current.sets
+    const n0 = engine.journal.length
+    // 두 장을 놓은 상태로 만들고, 화면에는 세 장 다 새 조각이 보인다고 하자
+    engine.hand = engine.hand.map((h: any, i: number) => (i < 2 ? { ...h, state: 'used', shape: null, piece: null } : h))
+    const fresh = ['ㄷ', 'ㅌ', 'ㅏ'].map((n) => PIECES.find((p) => p.name === n)!.shape)
+    const cards = fresh.map((shape) => ({ state: 'piece', selected: false, shape }))
+    const b = engine.board.slice(); b[15] |= 0b111 // 빈 판이면 '새 게임'으로 잡히므로 블록을 둔다
+    engine.resync(b, cards)
+    expect(engine.games.current.sets).toBe(sets0 + 1)
+    expect(engine.journal.length).toBe(n0 + 1)
+    expect(engine.journal[n0].hand.length).toBe(3)
+    expect(engine.events.some((e: any) => e.what === '다시 맞춤에서 새 세트')).toBe(true)
+    engine.capturing = false
+  })
+
+  test('화면 점수가 추적 추정의 1.6배를 넘으면(자릿수 오독) 기록하지 않는다', async () => {
+    engine.reset()
+    engine.capturing = true
+    feed('empty3.png')
+    await flush()
+    engine.scoreEst = 34000
+    const top = { score: 74809, lines: engine.lines, best: 0 }
+    for (let i = 0; i < 3; i++) engine.syncTopBar(top, true)
+    expect(engine.games.current.score).not.toBe(74809)
+    expect(engine.events.some((e: any) => e.what === '화면 점수 의심')).toBe(true)
+    const ok = { score: 34809, lines: engine.lines, best: 0 }
+    for (let i = 0; i < 3; i++) engine.syncTopBar(ok, true)
+    expect(engine.games.current.score).toBe(34809)
+    engine.capturing = false
+  })
 })
 
 describe('같은 조각 두 장', () => {

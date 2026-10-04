@@ -42,7 +42,7 @@ const JOURNAL_KEY = 'moamoa.journal.v1'
  * 세트 일지 (2026-10-04 사용자 요청): 세트마다 판·손·능력, 그 세트에서 나온 계산(추천과 근거), 실제로 놓은 자리를 남긴다.
  * 나중에 "의도대로 동작했나, 최적해였나"를 되짚는 용도. localStorage(최근 300세트)와 KV 백업에 같이 간다
  */
-export interface JournalSolve { t: number; why: string; ms: number; best?: string; value?: number; risk?: number; samples?: number; gained?: number; alt?: string; rescue?: string }
+export interface JournalSolve { t: number; why: string; ms: number; hand?: number[]; best?: string; value?: number; risk?: number; samples?: number; gained?: number; alt?: string; rescue?: string }
 export interface JournalMove { t: number; slot: number; key: string; r: number; c: number; cleared: number; how: string }
 export interface JournalSet {
   t: number
@@ -174,6 +174,8 @@ class Engine {
   pieceCounts = $state<Counts>(loadCounts())
   /** 판별 기록 (지금 판 + 지난 판들) */
   games = $state<GameHistory>(loadGames())
+  /** 추적으로 셈한 점수 (칸 + 300n² + 능력 50). 화면 점수가 이것과 크게 어긋나면 오독으로 보고 기록하지 않는다 */
+  scoreEst = 0
   /** 세트 일지 (최근 300세트). 화면 상태가 아니라 기록이라 $state가 아니다 */
   journal: JournalSet[] = loadJournal()
   private saveJournal() {
@@ -212,6 +214,7 @@ class Engine {
     if (!this.live) return
     const past = this.games.current && this.games.current.pieces > 0 ? [this.games.current, ...this.games.past].slice(0, 200) : this.games.past
     this.games = { current: newGame(true), past }
+    this.scoreEst = 0
     saveGames(this.games)
     backup.schedule(() => this.snapshot())
   }
@@ -520,7 +523,11 @@ class Engine {
     }
     if (t.score !== null && this.steady('topScore', String(t.score), need)) {
       const cur = this.games.current
-      if (cur && cur.score !== t.score) this.logGame((g) => { g.score = t.score! })
+      // 자릿수 하나를 잘못 읽으면(3 → 7) 점수가 두 배로 뛴다. 추적 추정과 1.6배 넘게 다르면 기록하지 않는다 (2026-10-04: 34,809를 74,809로)
+      const est = this.scoreEst
+      const suspicious = est > 3000 && (t.score > est * 1.6 + 3000 || t.score < est * 0.5 - 3000)
+      if (suspicious) { if (this.keys.scoreDoubt !== String(t.score)) { this.keys.scoreDoubt = String(t.score); this.log('화면 점수 의심', `${t.score} (추정 ${est})`) } }
+      else if (cur && cur.score !== t.score) this.logGame((g) => { g.score = t.score! })
     }
   }
   /** 화면 숫자로 개수를 한 번 맞춘 뒤다 (처음 맞출 때 값이 커지는 건 능력을 얻은 게 아니다) */
@@ -827,6 +834,12 @@ class Engine {
       this.iconTrack.clear()
       this.publishIcons()
     }
+    // 다시 맞추는 사이에 새 세트가 떴을 수 있다: 기억엔 쓴 카드가 있는데 화면은 세 장 다 조각이거나, 세 장 중 둘 이상이 다른 조각이다
+    // (바꿔 뽑기는 한 장만 바꾼다). 전에는 조용히 손만 바꿔 세트 수·조각 통계·일지가 한 세트씩 밀렸다 (2026-10-04 일지에서 발견:
+    // 한 세트에 놓음이 다섯 번 기록됨)
+    const allPieces = cards.every((c) => c.state === 'piece')
+    const changed = cards.filter((c, i) => c.state === 'piece' && this.hand[i]?.shape && canonicalKey(c.shape!) !== canonicalKey(this.hand[i].shape!)).length
+    const newSet = !fresh && allPieces && this.hand.length === 3 && (this.hand.some((h) => h.state === 'used') || changed >= 2)
     this.board = B
     this.hand = cards.map((c) => ({
       state: c.state === 'piece' ? 'piece' : 'used', selected: c.selected, shape: c.shape,
@@ -834,6 +847,7 @@ class Engine {
     }))
     // 새 게임의 첫 세트도 통계에 넣는다
     if (fresh && this.live) this.recordSet()
+    else if (newSet && this.live) { this.log('다시 맞춤에서 새 세트', cards.map((c) => (c.shape ? identify(c.shape)?.name : '?')).join(' ')); this.recordSet() }
     this.keys = {}
     this.counts = {}
     this.updatedAt = Date.now()
@@ -873,6 +887,7 @@ class Engine {
     // 이번 배치에서 새로 생긴 아이콘도 이제는 판에 있던 아이콘이다. 줄을 안 지운 배치에서도 꼭 풀어야
     // 다음에 그 줄을 지울 때 획득으로 센다 (전에는 줄을 지운 배치에서만 풀어서 획득이 자주 빠졌다)
     for (const ic of this.iconTrack.values()) ic.fresh = false
+    this.scoreEst += mv.shape.cells + lineScore(mv.cleared.length) + got * ABILITY_SCORE
     this.logGame((g) => {
       g.score += mv.shape.cells + lineScore(mv.cleared.length) + got * ABILITY_SCORE
       g.lines += mv.cleared.length
@@ -1163,7 +1178,7 @@ class Engine {
         const best = d.plans[0]
         const r = d.rescue
         this.journalSolve({
-          t: Date.now(), why: this.pendingWhy, ms: Math.round(d.ms),
+          t: Date.now(), why: this.pendingWhy, ms: Math.round(d.ms), hand: this.hand.map((h) => (h.state === 'piece' && h.piece ? h.piece.id : 0)),
           best: best ? best.steps.map(stepText).join(' ') : undefined, value: best ? Math.round(best.value) : undefined,
           risk: best ? Math.round(best.risk * 100) / 100 : undefined, samples: best?.samples, gained: best?.gained,
           alt: d.plans.slice(1, 3).map((p) => `${Math.round(p.value)}: ${p.steps.map(stepText).join(' ')}`).join(' | ') || undefined,
