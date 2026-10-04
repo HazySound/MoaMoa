@@ -67,12 +67,21 @@ export interface GameLog {
   dotsUsed: number
   /** 한 번에 지운 줄 수별 횟수 [0, 1줄, 2줄, 3줄, 4줄, 5줄] */
   clears: number[]
+  /**
+   * 세트 시작 시점의 "놓을 수 있는 조각 수" 분포 (2026-10-04). 실제 게임이 판을 보고 조각을 고르는지 알아내려고 센다.
+   * fit[빈칸 구간][놓을 수 있는 조각 수 0~3] — 빈칸 구간은 0~39 / 40~79 / 80~119 / 120~160.
+   * 판이 많이 찼는데도 세 조각이 다 들어가는 비율이 독립 추출 예측보다 높으면 생성기가 판을 본다
+   */
+  fit?: number[][]
+  /** 세트마다 나온 조각 id 세 개를 순서대로 (반복·연속 패턴 분석용, 최대 600세트) */
+  seq?: number[]
 }
 
 const GAMES_KEY = 'moamoa.games.v1'
 
 export const newGame = (fromStart: boolean): GameLog => ({
   start: Date.now(), end: Date.now(), fromStart, score: 0, lines: 0, sets: 0, pieces: 0, swapsUsed: 0, dotsUsed: 0, clears: [0, 0, 0, 0, 0, 0],
+  fit: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], seq: [],
 })
 
 export interface GameHistory { current: GameLog | null; past: GameLog[] }

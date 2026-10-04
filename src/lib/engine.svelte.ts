@@ -8,7 +8,7 @@
  *  - 세 조각을 다 놓으면 새 카드 3장을 기다린다
  * 점 찍기(1칸)와 바꿔 뽑기(카드가 다른 조각으로 바뀜)도 알아채서 그때만 다시 계산한다.
  */
-import { ABILITY_SCORE, canPlace, place, popcount, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
+import { ABILITY_SCORE, anyPlacement, canPlace, filledCount, place, popcount, boardKey, canonicalKey, COLS, emptyBoard, lineScore, orientations, ROWS, type Board, type Icon, type Shape } from './core/board'
 import { explainMove, type Move } from './core/track'
 import { identify, stageOf, type PieceDef } from './core/pieces'
 import { blendedWeights, loadCounts, loadGames, newGame, record, saveCounts, saveGames, seenIn, type Counts, type GameHistory, type GameLog } from './core/stats'
@@ -709,7 +709,19 @@ class Engine {
   }
 
   private recordSet() {
-    this.logGame((g) => g.sets++)
+    // 세트 시작 시점에 세 조각이 각각 놓을 자리가 있는지와 빈칸 수를 남긴다 (실제 게임의 조각 생성 규칙 조사용, GameLog.fit)
+    const shapes = this.hand.flatMap((h) => (h.state === 'piece' && h.shape ? [h.shape] : []))
+    const fits = shapes.filter((s) => anyPlacement(this.board, s)).length
+    const free = ROWS * COLS - filledCount(this.board)
+    const bucket = Math.min(3, Math.floor(free / 40))
+    const ids = this.hand.flatMap((h) => (h.piece ? [h.piece.id] : []))
+    this.logGame((g) => {
+      g.sets++
+      g.fit ??= [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+      if (shapes.length === 3) g.fit[bucket][fits]++
+      g.seq ??= []
+      if (g.seq.length < 1800) g.seq.push(...ids)
+    })
     this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
     saveCounts(this.pieceCounts)
     backup.schedule(() => this.snapshot())
@@ -844,6 +856,9 @@ class Engine {
       }
       this.stepIdx++
       this.log('추천대로 놓음', `${this.stepIdx}단계`)
+      // 조각 하나를 놓을 때마다 남은 조각으로 다시 계산한다 (2026-10-04). 전에는 인식 보정이 있을 때만 우연히 다시 계산했는데,
+      // 가상 플레이에서 조각마다 다시 계산하면 생존 145.5 → 169.5세트(+16%). 세트 중간은 계산 시간을 짧게 (midThinkMs)
+      if (this.stepIdx < 3 && this.hand.some((h) => h.state === 'piece') && !this.plan?.steps.slice(this.stepIdx).some((s) => s.slot < 0)) this.requestSolve('조각을 놓아서')
       return
     }
     // 추천과 다르게 놓았다. 남은 조각으로 다시 계산한다
@@ -1060,7 +1075,9 @@ class Engine {
       input: {
         board: $state.snapshot(this.board), icons: $state.snapshot(this.icons), hand: $state.snapshot(hand) as (Shape | null)[],
         heldAbilities: this.heldForSolve, swaps: this.swaps, dots: this.dots,
-        weights: blendedWeights(this.pieceCounts, this.stage), stage: this.stage, style: this.style, budgetMs: this.thinkMs,
+        weights: blendedWeights(this.pieceCounts, this.stage), stage: this.stage, style: this.style,
+        // 세트 중간(조각을 놓은 뒤) 다시 계산은 짧게. 세트당 세 번 계산하니 2.5초씩이면 기다림이 길다
+        budgetMs: reason === '조각을 놓아서' ? Math.min(this.thinkMs, 1200) : this.thinkMs,
       },
     }
     this.worker.postMessage(req)

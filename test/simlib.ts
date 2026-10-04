@@ -8,7 +8,7 @@
  *  - 다 못 놓게 되면 바꿔 뽑기 → 점 찍기 순서로 써서 버틴다
  *  - 점수 상한 500,000
  */
-import { emptyBoard, place, printBoard, type Board, type Icon, type Shape, ROWS, COLS } from '../src/lib/core/board'
+import { anyPlacement, emptyBoard, place, printBoard, type Board, type Icon, type Shape, ROWS, COLS } from '../src/lib/core/board'
 import { PIECES, defaultWeights, stageOf } from '../src/lib/core/pieces'
 import { blendedWeights } from '../src/lib/core/stats'
 import { readFileSync } from 'node:fs'
@@ -18,6 +18,13 @@ import { abilityAdvice, rescue, solve, rng } from '../src/lib/core/solver'
 const ADVICE = process.env.ADVICE === '1'
 /** 실험용: REPLAN=1이면 조각 하나를 놓을 때마다 다시 계산한다. 앱은 인식 보정 때문에 세트 중간에 자주 다시 계산한다 (2026-10-04: 35세트에 28번) */
 const REPLAN = process.env.REPLAN === '1'
+/**
+ * 실험용 조각 생성 규칙 (2026-10-04). 실제 게임이 판을 보고 조각을 고를 가능성을 재 본다.
+ *  - (없음): 단계별 빈도에서 독립 추출
+ *  - fit1: 세 조각 중 하나는 지금 판에 놓을 수 있게 다시 뽑는다 (사용자 관찰: 죽는 판도 최소 하나는 들어갔다)
+ *  - fitall: 세 조각 모두 세트 시작 시점에 놓을 수 있게 하나씩 다시 뽑는다
+ */
+const GEN = process.env.GEN ?? ''
 
 const DOT: Shape = { w: 1, h: 1, rows: [1], cells: 1, key: '1x1:1' }
 export const CAP = 500_000
@@ -70,6 +77,8 @@ export function playGame(gi: number, o: { maxSets: number; style: number; budget
     }
     outer: for (; sets < maxSets && score < CAP; sets++) {
       let hand: (Shape | null)[] = [0, 1, 2].map(() => drawPiece(rand, lines))
+      if (GEN === 'fitall') hand = hand.map((h) => { for (let k = 0; k < 50 && !anyPlacement(board, h!); k++) h = drawPiece(rand, lines); return h })
+      else if (GEN === 'fit1') for (let k = 0; k < 50 && !hand.some((h) => anyPlacement(board, h!)); k++) hand[k % 3] = drawPiece(rand, lines)
       while (hand.some(Boolean)) {
         const input = { board, icons, hand, heldAbilities: swaps + dots, swaps, dots, weights: weightsFor(lines), stage: stageOf(lines), style, beam, budgetMs: budget }
         const plan = solve(input)[0]

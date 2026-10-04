@@ -74,24 +74,44 @@ describe('엔진 추적', () => {
 })
 
 describe('추천대로 놓기', () => {
-  test('계획 그대로면 다시 계산하지 않고 단계만 넘어간다', async () => {
+  test('계획 그대로 놓으면 "추천대로 놓음"으로 세고, 남은 조각으로 다시 계산한다 (조각마다 재계산, 2026-10-04)', async () => {
     const { explainMove } = await import('../src/lib/core/track')
     engine.reset()
     feed('empty3.png')
     await flush()
-    const plan = engine.plan
-    expect(plan.steps.length).toBe(3)
+    expect(engine.plan.steps.length).toBe(3)
     for (let k = 0; k < 3; k++) {
-      const st = plan.steps[k]
+      const plan = engine.plan
+      const st = plan.steps[0]
       const hand = engine.hand.flatMap((h: any, slot: number) => (h.state === 'piece' ? [{ slot, shape: h.shape }] : []))
       const mv = explainMove(engine.board, st.boardAfter, hand, true)
       expect(mv?.slot).toBe(st.slot)
       engine.applyMove(mv, st.boardAfter)
-      expect(engine.plan).toBe(plan) // 같은 계획 그대로
-      expect(engine.stepIdx).toBe(k + 1)
-      expect(engine.solving).toBe(false)
+      expect(engine.events.slice(0, 2).map((e: any) => e.what)).toContain('추천대로 놓음')
+      if (k < 2) {
+        // 남은 조각으로 다시 계산을 요청하고(짧은 예산), 결과가 오면 남은 조각 수만큼의 단계가 된다
+        expect(engine.solving).toBe(true)
+        await flush()
+        expect(engine.solving).toBe(false)
+        expect(engine.plan.steps.length).toBe(2 - k)
+        expect(engine.stepIdx).toBe(0)
+      }
     }
     expect(engine.hand.every((h: any) => h.state === 'used')).toBe(true)
+  })
+
+  test('새 세트를 기록하면 놓을 수 있는 조각 수 분포(fit)와 조각 순서(seq)가 남는다', async () => {
+    engine.reset()
+    engine.capturing = true // 실시간으로 보는 세트만 기록한다
+    feed('empty3.png')
+    await flush()
+    const g = engine.games.current
+    expect(g).toBeTruthy()
+    expect(g.sets).toBe(1)
+    // 빈 판(빈칸 160 → 구간 3)에서 세 조각이 다 놓인다
+    expect(g.fit[3][3]).toBe(1)
+    expect(g.seq.length).toBe(3)
+    engine.capturing = false
   })
 })
 
@@ -114,9 +134,12 @@ describe('같은 조각 두 장', () => {
     engine.plans = [{ ...engine.plan, steps: [st, ...engine.plan.steps.filter((s: any) => s !== st)] }]
     const other = st.slot === 0 ? 1 : 0
     engine.applyMove({ slot: other, shape: st.shape, r: st.r, c: st.c, cleared: st.cleared, board: st.boardAfter }, st.boardAfter)
-    expect(engine.stepIdx).toBe(1)
-    expect(engine.solving).toBe(false)
-    expect(engine.plan.steps.slice(1).some((s: any) => s.slot === st.slot)).toBe(true) // 남은 ㄱ 단계는 아직 안 쓴 카드로
+    expect(engine.events.slice(0, 2).map((e: any) => e.what)).toContain('추천대로 놓음') // 추천과 다른 카드로 놓았어도 '다른 자리'가 아니다
+    expect(engine.plan.steps.slice(1).some((s: any) => s.slot === st.slot)).toBe(true) // 남은 ㄱ 단계는 아직 안 쓴 카드로 (재계산 결과가 오기 전)
+    await flush()
+    // 재계산 뒤에도 남은 두 조각(ㄱ 하나, ㅡ)으로 계획이 선다
+    expect(engine.plan.steps.length).toBe(2)
+    expect(engine.hand[other].state).toBe('used')
   })
 })
 
