@@ -25,7 +25,8 @@ export default {
     }
     if (req.method === 'PUT') {
       const body = await req.text()
-      if (body.length > 256 * 1024) return new Response('너무 큼', { status: 413 })
+      // 세트 일지(최근 300세트)까지 실으면 200KB를 넘길 수 있다 (KV 값 한도는 25MB)
+      if (body.length > 2 * 1024 * 1024) return new Response('너무 큼', { status: 413 })
       try { JSON.parse(body) } catch { return new Response('JSON이 아님', { status: 400 }) }
       await env.STATS.put(key, body)
       return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })

@@ -36,6 +36,37 @@ export interface HandCard {
 const PREFS_KEY = 'moamoa.prefs.v1'
 const SHAPES_KEY = 'moamoa.shapes.v1'
 const EVENTS_KEY = 'moamoa.events.v1'
+const JOURNAL_KEY = 'moamoa.journal.v1'
+
+/**
+ * 세트 일지 (2026-10-04 사용자 요청): 세트마다 판·손·능력, 그 세트에서 나온 계산(추천과 근거), 실제로 놓은 자리를 남긴다.
+ * 나중에 "의도대로 동작했나, 최적해였나"를 되짚는 용도. localStorage(최근 300세트)와 KV 백업에 같이 간다
+ */
+export interface JournalSolve { t: number; why: string; ms: number; best?: string; value?: number; risk?: number; samples?: number; gained?: number; alt?: string; rescue?: string }
+export interface JournalMove { t: number; slot: number; key: string; r: number; c: number; cleared: number; how: string }
+export interface JournalSet {
+  t: number
+  /** 판 시작 시각 (어느 판인지) */
+  game: number
+  set: number
+  lines: number
+  stage: number
+  free: number
+  /** 손의 조각 id 세 개 */
+  hand: number[]
+  /** 세트 시작 시점의 판 (줄별 비트) */
+  board: number[]
+  icons: string
+  dots: number
+  swaps: number
+  solves: JournalSolve[]
+  moves: JournalMove[]
+}
+const JOURNAL_MAX = 300
+function loadJournal(): JournalSet[] {
+  try { return JSON.parse(localStorage.getItem(JOURNAL_KEY) ?? '[]') } catch { return [] }
+}
+const stepText = (s: Step) => `${s.slot}:${s.shape.key}@${s.r},${s.c}${s.cleared.length ? '!' + s.cleared.length : ''}${s.abilities ? '+' + s.abilities : ''}`
 
 /** 검산으로 확인한 숫자 모양 (core/counts.ts). 같은 창 크기로 다시 열면 바로 알아본다 */
 function loadShapes(): Memory {
@@ -143,6 +174,28 @@ class Engine {
   pieceCounts = $state<Counts>(loadCounts())
   /** 판별 기록 (지금 판 + 지난 판들) */
   games = $state<GameHistory>(loadGames())
+  /** 세트 일지 (최근 300세트). 화면 상태가 아니라 기록이라 $state가 아니다 */
+  journal: JournalSet[] = loadJournal()
+  private saveJournal() {
+    try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(this.journal)) } catch { /* 용량·사생활 보호 모드 */ }
+  }
+  /** 지금 세트의 일지 항목 (없으면 null) */
+  private get journalNow(): JournalSet | null {
+    const j = this.journal[this.journal.length - 1]
+    return j && j.game === (this.games.current?.start ?? 0) ? j : null
+  }
+  private journalSolve(note: JournalSolve) {
+    const j = this.journalNow
+    if (!j) return
+    j.solves.push(note)
+    this.saveJournal()
+  }
+  private journalMove(mv: { slot: number; shape: Shape; r: number; c: number; cleared: number[] }, how: string) {
+    const j = this.journalNow
+    if (!j) return
+    j.moves.push({ t: Date.now(), slot: mv.slot, key: mv.shape.key, r: mv.r, c: mv.c, cleared: mv.cleared.length, how })
+    this.saveJournal()
+  }
 
   /** 지금 판 기록을 고친다. 없으면 (중간부터 공유한 것으로 보고) 새로 연다 */
   private logGame(fn: (g: GameLog) => void) {
@@ -485,6 +538,7 @@ class Engine {
       counts: $state.snapshot(this.pieceCounts),
       games: $state.snapshot(this.games),
       prefs: { style: this.style, thinkMs: this.thinkMs, lines: this.lines, swaps: this.swaps, dots: this.dots },
+      journal: this.journal,
     }
   }
 
@@ -655,6 +709,7 @@ class Engine {
     if (swapped) {
       this.markUsed('swaps')
       this.log('바꿔 뽑기 사용', `${swapWhat}→ ◎${this.dots} ⇄${this.swaps}`)
+      { const j = this.journalNow; if (j) { j.moves.push({ t: Date.now(), slot: -2, key: swapWhat.trim(), r: -1, c: -1, cleared: 0, how: '바꿔 뽑기' }); this.saveJournal() } }
       this.logGame((g) => g.swapsUsed++)
       this.requestSolve('바꿔 뽑기를 써서')
     }
@@ -722,6 +777,13 @@ class Engine {
       g.seq ??= []
       if (g.seq.length < 1800) g.seq.push(...ids)
     })
+    this.journal.push({
+      t: Date.now(), game: this.games.current?.start ?? 0, set: this.games.current?.sets ?? 0, lines: this.lines, stage: this.stage, free,
+      hand: ids, board: $state.snapshot(this.board) as number[], icons: this.icons.map((ic) => `${ic.kind === 'dot' ? '◎' : '⇄'}${ic.r},${ic.c}`).join(' '),
+      dots: this.dots, swaps: this.swaps, solves: [], moves: [],
+    })
+    if (this.journal.length > JOURNAL_MAX) this.journal.splice(0, this.journal.length - JOURNAL_MAX)
+    this.saveJournal()
     this.pieceCounts = record(this.pieceCounts, this.stage, this.hand.flatMap((h) => (h.piece ? [h.piece.id] : [])))
     saveCounts(this.pieceCounts)
     backup.schedule(() => this.snapshot())
@@ -856,6 +918,7 @@ class Engine {
       }
       this.stepIdx++
       this.log('추천대로 놓음', `${this.stepIdx}단계`)
+      this.journalMove(mv, mv.slot < 0 ? '점 찍기(추천)' : '추천대로')
       // 조각 하나를 놓을 때마다 남은 조각으로 다시 계산한다 (2026-10-04). 전에는 인식 보정이 있을 때만 우연히 다시 계산했는데,
       // 가상 플레이에서 조각마다 다시 계산하면 생존 145.5 → 169.5세트(+16%). 세트 중간은 계산 시간을 짧게 (midThinkMs)
       if (this.stepIdx < 3 && this.hand.some((h) => h.state === 'piece') && !this.plan?.steps.slice(this.stepIdx).some((s) => s.slot < 0)) this.requestSolve('조각을 놓아서')
@@ -864,6 +927,7 @@ class Engine {
     // 추천과 다르게 놓았다. 남은 조각으로 다시 계산한다
     const where = `${mv.shape.cells}칸 조각을 ↓${mv.r + 1}행 →${mv.c + 1}열에`
     if (this.solving) this.log('계산 중에 놓음', where)
+    this.journalMove(mv, mv.slot < 0 ? '점 찍기' : this.solving ? '계산 중에' : '다른 자리')
     if (this.hand.some((h) => h.state === 'piece')) this.requestSolve(this.solving ? '계산이 끝나기 전에 놓아서' : '추천과 다른 자리에 놓아서')
     else { this.plans = []; this.stepIdx = 0 }
   }
@@ -1040,6 +1104,7 @@ class Engine {
    */
   private solveCache = new Map<string, { plans: Plan[]; rescue: Rescue | null }>()
   private pendingKey = ''
+  private pendingWhy = ''
 
   private situationKey(hand: (Shape | null)[]) {
     return [boardKey(this.board), this.icons.map((i) => `${i.r},${i.c}${i.kind[0]}`).join(';'), hand.map((h) => h?.key ?? '-').join('/'),
@@ -1059,11 +1124,13 @@ class Engine {
       this.planIdx = 0
       this.stepIdx = 0
       this.log('저장된 계산 사용', reason)
+      this.journalSolve({ t: Date.now(), why: reason + ' (저장된 계산)', ms: 0, best: hit.plans[0]?.steps.map(stepText).join(' '), value: hit.plans[0] ? Math.round(hit.plans[0].value) : undefined })
       return
     }
     this.solveReason = reason
     this.log('계산', reason)
     this.pendingKey = key
+    this.pendingWhy = reason
     // 이전 계산이 아직 돌고 있으면 버린다. 기다리면 새 계산이 그만큼 늦게 끝난다
     if (this.solving && this.worker) { this.worker.terminate(); this.worker = null }
     this.worker ??= this.makeWorker()
@@ -1092,6 +1159,17 @@ class Engine {
       this.progress = 1
       this.plans = d.plans
       this.rescue = d.rescue
+      {
+        const best = d.plans[0]
+        const r = d.rescue
+        this.journalSolve({
+          t: Date.now(), why: this.pendingWhy, ms: Math.round(d.ms),
+          best: best ? best.steps.map(stepText).join(' ') : undefined, value: best ? Math.round(best.value) : undefined,
+          risk: best ? Math.round(best.risk * 100) / 100 : undefined, samples: best?.samples, gained: best?.gained,
+          alt: d.plans.slice(1, 3).map((p) => `${Math.round(p.value)}: ${p.steps.map(stepText).join(' ')}`).join(' | ') || undefined,
+          rescue: r ? (r.kind === 'dot' ? `점 찍기 ${r.r},${r.c} 이득 ${r.gain}` : `바꿔 뽑기 ${r.slot + 1}번 이득 ${r.gain}`) : undefined,
+        })
+      }
       this.solveCache.set(this.pendingKey, { plans: d.plans, rescue: d.rescue })
       if (this.solveCache.size > 40) this.solveCache.delete(this.solveCache.keys().next().value!)
       this.planIdx = 0

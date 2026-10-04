@@ -113,6 +113,30 @@ describe('추천대로 놓기', () => {
     expect(g.seq.length).toBe(3)
     engine.capturing = false
   })
+
+  test('세트 일지: 세트 시작 판·손, 계산 근거(추천·값·위험), 실제 놓은 자리가 남고 백업에 실린다', async () => {
+    const { explainMove } = await import('../src/lib/core/track')
+    engine.reset()
+    engine.capturing = true
+    feed('empty3.png')
+    await flush()
+    const j = engine.journal[engine.journal.length - 1]
+    expect(j.hand.length).toBe(3)
+    expect(j.board.length).toBe(16)
+    expect(j.free).toBe(160)
+    expect(j.solves.length).toBeGreaterThanOrEqual(1)
+    expect(typeof j.solves[0].why).toBe('string') // 앞 테스트와 같은 상황이면 '저장된 계산'으로 남는다
+    expect(j.solves[0].best).toMatch(/@/)
+    expect(typeof j.solves[0].value).toBe('number')
+    const st = engine.plan.steps[0]
+    const hand = engine.hand.flatMap((h: any, slot: number) => (h.state === 'piece' ? [{ slot, shape: h.shape }] : []))
+    engine.applyMove(explainMove(engine.board, st.boardAfter, hand, true), st.boardAfter)
+    expect(j.moves.length).toBe(1)
+    expect(j.moves[0].how).toBe('추천대로')
+    expect(j.moves[0].key).toBe(st.shape.key)
+    expect(engine.snapshot().journal.length).toBe(engine.journal.length)
+    engine.capturing = false
+  })
 })
 
 describe('같은 조각 두 장', () => {
